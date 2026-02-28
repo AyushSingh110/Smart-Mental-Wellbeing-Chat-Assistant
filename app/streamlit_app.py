@@ -147,32 +147,10 @@ if user_input:
             response = requests.post(f"{BACKEND_URL}/chat", json=payload)
             data = response.json()
 
-            assistant_reply = data.get("response", "")
-
-            # ── Extract nested metrics ──────────────────
-            mental_health = data.get("mental_health", {})
-            mhi = mental_health.get("mhi", 0)
-            category = mental_health.get("category", "unknown")
-            trs = mental_health.get("trs", 0)
-            component_scores = mental_health.get("component_scores", {})
-
-            emotion = data.get("emotion", {})
-            emotion_label = emotion.get("label", "unknown")
-            emotion_confidence = emotion.get("confidence", 0)
-            emotion_scores = emotion.get("scores", {})
-
-            intent = data.get("intent", {})
-            intent_label = intent.get("intent", "unknown")
-            intent_confidence = intent.get("confidence", 0)
-
-            crisis = data.get("crisis", {})
-            crisis_flag = crisis.get("is_crisis", False)
-            crisis_prob = crisis.get("probability", 0)
-            crisis_keywords = crisis.get("matched_keywords", [])
-            safety_override = crisis.get("safety_override", False)
-
-            safety_flagged = data.get("safety_flagged", False)
-            processing_time = data.get("processing_time_ms", 0)
+            assistant_reply = data.get("response")
+            mhi = data.get("mhi", 0)
+            category = data.get("category", "Unknown")
+            crisis_flag = data.get("crisis", False)
 
             st.session_state.chat_history.append(
                 {"role": "assistant", "content": assistant_reply}
@@ -182,57 +160,30 @@ if user_input:
                 st.markdown(assistant_reply)
                 st.markdown("---")
 
-                # ── Row 1: MHI + Category ──────────────
                 col1, col2 = st.columns(2)
 
                 col1.markdown(f"""
                 <div class="metric-box">
                     <h3>Mental Health Index</h3>
-                    <h2>{mhi:.1f}/100</h2>
-                    <p style="font-size:12px;color:#666">TRS: {trs:.4f}</p>
+                    <h2>{mhi}/100</h2>
                 </div>
                 """, unsafe_allow_html=True)
 
-                col1.progress(int(min(mhi, 100)))
+                col1.progress(int(mhi))
 
                 category_class = {
-                    "normal": "normal",
-                    "mild_stress": "stress",
-                    "anxiety": "anxiety",
-                    "depression_risk": "depression",
-                    "crisis": "crisis",
+                    "Normal": "normal",
+                    "Mild Stress": "stress",
+                    "Anxiety": "anxiety",
+                    "Depression": "depression"
                 }.get(category, "crisis")
-
-                category_display = category.replace("_", " ").title()
 
                 col2.markdown(f"""
                 <div class="badge {category_class}">
-                    {category_display}
+                    {category}
                 </div>
                 """, unsafe_allow_html=True)
 
-                # ── Row 2: Emotion + Intent + Crisis ───
-                col_e, col_i, col_c = st.columns(3)
-
-                col_e.metric("Emotion", emotion_label.title(), f"{emotion_confidence:.0%}")
-                col_i.metric("Intent", intent_label.replace('_', ' ').title(), f"{intent_confidence:.0%}")
-                col_c.metric("Crisis Risk", f"{crisis_prob:.0%}", "CRISIS" if crisis_flag else "Safe",
-                             delta_color="inverse")
-
-                # ── Emotion breakdown chart ────────────
-                if emotion_scores:
-                    emotion_df = pd.DataFrame(
-                        list(emotion_scores.items()), columns=["Emotion", "Score"]
-                    ).sort_values("Score", ascending=True)
-                    fig_emo = px.bar(
-                        emotion_df, x="Score", y="Emotion", orientation="h",
-                        title="Emotion Distribution",
-                        color="Score", color_continuous_scale="Blues",
-                    )
-                    fig_emo.update_layout(height=280, showlegend=False)
-                    st.plotly_chart(fig_emo, use_container_width=True)
-
-                # ── MHI Gauge ──────────────────────────
                 fig = go.Figure(go.Indicator(
                     mode="gauge+number",
                     value=mhi,
@@ -240,34 +191,13 @@ if user_input:
                     gauge={
                         'axis': {'range': [0, 100]},
                         'bar': {'color': "green" if mhi > 70 else "orange" if mhi > 40 else "red"},
-                        'steps': [
-                            {'range': [0, 20], 'color': '#ffebee'},
-                            {'range': [20, 40], 'color': '#fff3e0'},
-                            {'range': [40, 60], 'color': '#fff9c4'},
-                            {'range': [60, 80], 'color': '#e8f5e9'},
-                            {'range': [80, 100], 'color': '#c8e6c9'},
-                        ],
                     }
                 ))
+
                 st.plotly_chart(fig, use_container_width=True)
 
-                # ── Component scores ───────────────────
-                if component_scores:
-                    st.markdown("**Risk Component Scores**")
-                    for key, val in component_scores.items():
-                        label = key.replace('_', ' ').title()
-                        st.progress(min(val, 1.0), text=f"{label}: {val:.2%}")
-
-                # ── Processing info ────────────────────
-                info_parts = [f"Processing: {processing_time:.0f}ms"]
-                if safety_flagged:
-                    info_parts.append("Safety filter triggered")
-                if crisis_keywords:
-                    info_parts.append(f"Keywords: {', '.join(crisis_keywords)}")
-                st.caption(" | ".join(info_parts))
-
                 if crisis_flag:
-                    st.error("\u26a0\ufe0f Immediate support recommended. Contact emergency services or a trusted person.")
+                    st.error("Immediate support recommended. Contact emergency services or a trusted person.")
 
         except requests.exceptions.RequestException as e:
             st.error(f"Backend error: {e}")
