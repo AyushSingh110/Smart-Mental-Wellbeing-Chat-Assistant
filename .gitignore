@@ -1,0 +1,108 @@
+# ==========================
+# Python
+# ==========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+*.pyo
+
+# ==========================
+# Virtual Environments
+# ==========================
+venv/
+env/
+.venv/
+mental_ai/
+ENV/
+env.bak/
+venv.bak/
+
+# ==========================
+# Conda
+# ==========================
+*.conda
+*.env
+.conda/
+conda-meta/
+
+# ==========================
+# Environment Variables
+# ==========================
+.env
+.env.*
+*.env
+
+# ==========================
+# Logs
+# ==========================
+logs/
+*.log
+
+# ==========================
+# Jupyter Notebooks
+# ==========================
+.ipynb_checkpoints
+
+# ==========================
+# Streamlit
+# ==========================
+.streamlit/secrets.toml
+
+# ==========================
+# FAISS & Vector Index
+# ==========================
+backend/rag/faiss_index.index
+backend/rag/metadata.json
+*.index
+
+# ==========================
+# Model Checkpoints
+# ==========================
+backend/models/
+backend/training/emotion_model/
+*.pt
+*.bin
+*.ckpt
+
+# ==========================
+# HuggingFace Cache
+# ==========================
+.cache/
+~/.cache/huggingface/
+
+# ==========================
+# MongoDB
+# ==========================
+dump/
+*.bson
+*.json
+
+# ==========================
+# Mac / Windows
+# ==========================
+.DS_Store
+Thumbs.db
+
+# ==========================
+# IDE
+# ==========================
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ==========================
+# Docker
+# ==========================
+*.pid
+*.seed
+*.pid.lock
+docker-compose.override.yml
+
+# ==========================
+# Misc
+# ==========================
+*.sqlite3
+*.db
