@@ -1,0 +1,16 @@
+torch 
+torchvision 
+torchaudio
+transformers
+sentence-transformers
+faiss-cpu
+datasets
+fastapi 
+uvicorn
+pymongo
+streamlit
+scikit-learn
+python-dotenv
+openai
+python-dotenv
+pydantic_settings
