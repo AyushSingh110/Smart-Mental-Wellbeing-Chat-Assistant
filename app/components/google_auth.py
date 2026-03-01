@@ -2,8 +2,8 @@ import streamlit as st
 from streamlit_oauth import OAuth2Component
 import requests
 
-CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID"
-CLIENT_SECRET = "YOUR_GOOGLE_CLIENT_SECRET"
+CLIENT_ID = "632129549033-j6f7vgdd9jqlk7du47878gg5707t1jgl.apps.googleusercontent.com"
+CLIENT_SECRET = "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"
 
 AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
