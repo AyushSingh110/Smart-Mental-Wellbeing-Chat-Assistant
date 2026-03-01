@@ -1,11 +1,17 @@
-import torch
+from backend.config import settings
 from transformers import DistilBertTokenizerFast, DistilBertForSequenceClassification
-
+import torch
 class EmotionService:
-    def __init__(self, model_path="backend/models/emotion_model"):
-        self.tokenizer = DistilBertTokenizerFast.from_pretrained(model_path)
-        self.model = DistilBertForSequenceClassification.from_pretrained(model_path)
+    def __init__(self):
+        self.tokenizer = DistilBertTokenizerFast.from_pretrained(
+            "distilbert-base-uncased"
+        )
+        self.model = DistilBertForSequenceClassification.from_pretrained(
+            "distilbert-base-uncased",
+            num_labels=6
+        )
         self.model.eval()
+
         self.labels = ["stress", "anxiety", "sadness", "anger", "fear", "neutral"]
 
     def predict(self, text):

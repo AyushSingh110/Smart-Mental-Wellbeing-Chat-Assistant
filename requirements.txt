@@ -7,10 +7,11 @@ faiss-cpu
 datasets
 fastapi 
 uvicorn
-pymongo
+moto
 streamlit
 scikit-learn
 python-dotenv
 openai
 python-dotenv
 pydantic_settings
+streamlit-mic-recorder

@@ -1,46 +1,47 @@
 import os
-from openai import OpenAI
+import google.generativeai as genai
 from dotenv import load_dotenv
 
 load_dotenv()
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# Configure Gemini
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
-MODEL_NAME = "gpt-4o-mini"
+MODEL_NAME = "gemini-2.5-flash-lite"
 TEMPERATURE = 0.3
-MAX_TOKENS = 600
+MAX_TOKENS = 800
+
+# Initialize model once (singleton pattern)
+model = genai.GenerativeModel(
+    MODEL_NAME,
+    generation_config={
+        "temperature": TEMPERATURE,
+        "max_output_tokens": MAX_TOKENS,
+    }
+)
 
 
 def generate_llm_response(prompt: str) -> str:
     """
-    Sends prompt to OpenAI model and returns structured CBT response.
-    Includes error handling and safety fallback.
+    Sends a fully constructed prompt to Gemini.
+    Prompt engineering should be handled upstream (RAG service).
     """
 
     try:
-        response = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a CBT-based mental health support assistant."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            temperature=TEMPERATURE,
-            max_tokens=MAX_TOKENS,
-        )
+        response = model.generate_content(prompt)
 
-        return response.choices[0].message.content.strip()
+        if hasattr(response, "text") and response.text:
+            return response.text.strip()
+
+        return (
+            "I'm here to support you. I couldn't generate a response just now. "
+            "If you're feeling overwhelmed, please consider reaching out to a trusted person."
+        )
 
     except Exception as e:
         print(f"LLM Error: {e}")
 
         return (
-            "I'm here to support you. It looks like there was a technical issue "
-            "while generating a response. If you're feeling overwhelmed, "
-            "please consider reaching out to a trusted person or a mental health professional."
+            "I'm here to support you. There was a technical issue generating a response. "
+            "If you're feeling overwhelmed, consider reaching out to someone you trust."
         )

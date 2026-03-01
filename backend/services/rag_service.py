@@ -2,13 +2,13 @@ import json
 import faiss
 import numpy as np
 from sentence_transformers import SentenceTransformer
-from services.llm_service import generate_llm_response
+from backend.services.llm_service import generate_llm_response
 
 MODEL_NAME = "all-MiniLM-L6-v2"
 INDEX_PATH = "backend/rag/faiss_index.index"
 METADATA_PATH = "backend/rag/metadata.json"
 
-SIMILARITY_THRESHOLD = 1.2  
+SIMILARITY_THRESHOLD = 2.0
 TOP_K = 3
 
 class RAGService:
@@ -63,11 +63,14 @@ Tone Guidelines:
         distances, indices = self.index.search(np.array(query_embedding), TOP_K)
 
         results = []
+
         for i, idx in enumerate(indices[0]):
             if distances[0][i] <= SIMILARITY_THRESHOLD:
                 results.append(self.metadata[idx])
-            if not results:
-                results = [self.metadata[indices[0][0]]]
+
+    # fallback if nothing passes threshold
+        if not results:
+            results = [self.metadata[indices[0][0]]]
 
         return results
 
@@ -83,8 +86,8 @@ Tone Guidelines:
     ):
 
         context_text = "\n\n".join(
-            [chunk["text"] for chunk in retrieved_chunks]
-        )
+            [f"Technique {i+1}:\n{chunk['text']}" for i, chunk in enumerate(retrieved_chunks)]
+     )
 
         prompt = f"""
 {self.system_prompt}
@@ -103,10 +106,18 @@ User Message:
 {user_message}
 
 Instructions:
-- Base your response on retrieved context.
-- Align with emotional state.
-- Provide structured coping steps when appropriate.
-- End with a gentle supportive question.
+- You MUST ground your response in the retrieved CBT context.
+- Do NOT provide generic psychoeducation.
+- Do NOT invent new techniques.
+- Align with the user’s emotional state and mental health index.
+- Adapt tone to emotional intensity.
+
+Apply CBT principles conversationally without explicitly naming techniques.
+Integrate the method naturally into the conversation.
+Focus on exploring thoughts, emotions, and behavioral patterns gently.
+Avoid sounding like a worksheet, therapist manual, or instructional guide.
+
+End with one gentle, reflective, supportive question.
 """
 
         return prompt
@@ -130,6 +141,12 @@ Instructions:
 
 
         retrieved_chunks = self.retrieve_context(user_message)
+        if mental_health_index < 60:
+            depth_instruction = "Provide detailed structured CBT steps."
+        elif mental_health_index < 80:
+            depth_instruction = "Provide moderate structured coping guidance."
+        else:
+            depth_instruction = "Provide supportive and light CBT reframing."
 
         prompt = self.build_prompt(
             user_message,

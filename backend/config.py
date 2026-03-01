@@ -1,8 +1,3 @@
-"""
-Centralised application configuration loaded from environment variables.
-Uses pydantic‑settings so every value can be overridden via .env or OS env.
-"""
-
 from pydantic_settings import BaseSettings
 from pydantic import Field
 
@@ -17,6 +12,7 @@ class Settings(BaseSettings):
         description="MongoDB connection string",
     )
     MONGO_DB_NAME: str = "smart_mental_health"
+    GEMINI_API_KEY: str = Field(default="", description="Google Gemini API key")
 
     OPENAI_API_KEY: str = Field(default="", description="OpenAI API key")
     LLM_MODEL: str = "gpt-4o"

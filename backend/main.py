@@ -1,10 +1,3 @@
-"""
-Smart Mental Well-Being Chat Assistant – FastAPI Routes
-=======================================================
-All endpoints defined here. DB: MongoDB Atlas via pymongo.
-Collections: "conversations", "users"
-"""
-
 from __future__ import annotations
 
 import logging
@@ -14,7 +7,7 @@ from datetime import datetime, timedelta
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from pymongo import MongoClient
+from motor.motor_asyncio import AsyncIOMotorClient
 
 from backend.config import settings
 from backend.services.emotion_service import EmotionService
@@ -23,6 +16,8 @@ from backend.services.intent_service import IntentService
 from backend.services.matrix_service import MentalHealthMatrix
 from backend.services.rag_service import RAGService
 from backend.services.safety_service import SafetyService
+from backend.routes.routes_report import router as report_router
+
 
 
 logging.basicConfig(
@@ -31,8 +26,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+mongo = AsyncIOMotorClient(
+    settings.MONGO_URI,
+    tls=True,
+    serverSelectionTimeoutMS=5000,
+)
 
-mongo = MongoClient(settings.MONGO_URI)
 db = mongo[settings.MONGO_DB_NAME]
 conversations_col = db["conversations"]
 users_col = db["users"]
@@ -59,14 +58,18 @@ class ChatResponse(BaseModel):
     category: str
 
 
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting %s v%s …", settings.APP_NAME, settings.APP_VERSION)
-    conversations_col.create_index([("user_id", 1), ("timestamp", -1)])
-    users_col.create_index("user_id", unique=True)
+
+    # Create indexes asynchronously
+    await conversations_col.create_index([("user_id", 1), ("timestamp", -1)])
+    await users_col.create_index("user_id", unique=True)
+
     logger.info("MongoDB connected – database: %s", settings.MONGO_DB_NAME)
+
     yield
+
     mongo.close()
     logger.info("Shutdown complete.")
 
@@ -77,6 +80,7 @@ app = FastAPI(
     description="Mental health chat API with emotion/crisis detection and MHI scoring.",
     lifespan=lifespan,
 )
+app.include_router(report_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -102,10 +106,10 @@ def root():
 
 
 @app.post("/chat", response_model=ChatResponse, summary="Chat pipeline")
-def chat(body: ChatRequest):
-    existing = users_col.find_one({"user_id": body.user_id})
+async def chat(body: ChatRequest):
+    existing = await users_col.find_one({"user_id": body.user_id})
     if not existing:
-        users_col.insert_one({
+        await users_col.insert_one({
             "user_id": body.user_id,
             "created_at": datetime.utcnow(),
             "baseline_mhi": 78,
@@ -138,7 +142,7 @@ def chat(body: ChatRequest):
         crisis_score=crisis_score,
     )
 
-    conversations_col.insert_one({
+    await conversations_col.insert_one({
         "user_id": body.user_id,
         "timestamp": datetime.utcnow(),
         "message": body.message,
@@ -162,28 +166,21 @@ def chat(body: ChatRequest):
 
 
 @app.get("/user/{user_id}/history", summary="Conversation history")
-def user_history(user_id: str, limit: int = Query(default=10, ge=1, le=100)):
-    docs = list(
+async def user_history(user_id: str, limit: int = Query(default=10, ge=1, le=100)):
+
+    cursor = (
         conversations_col.find({"user_id": user_id})
-        .sort("timestamp", -1)
+        .sort("timestamp", 1)
         .limit(limit)
     )
+
+    docs = await cursor.to_list(length=limit)
+
     for d in docs:
         d.pop("_id", None)
-    return {"user_id": user_id, "count": len(docs), "conversations": docs}
 
-
-
-@app.get("/user/{user_id}/timeline", summary="MHI timeline for Streamlit")
-def user_timeline(user_id: str, days: int = Query(default=30, ge=1, le=365)):
-    cutoff = datetime.utcnow() - timedelta(days=days)
-    docs = list(
-        conversations_col.find(
-            {"user_id": user_id, "timestamp": {"$gte": cutoff}},
-            {"mhi": 1, "timestamp": 1, "_id": 0},
-        ).sort("timestamp", 1)
-    )
-    return [
-        {"mhi": d["mhi"], "timestamp": d["timestamp"].isoformat()}
-        for d in docs
-    ]
+    return {
+        "user_id": user_id,
+        "count": len(docs),
+        "conversations": docs,
+    }
