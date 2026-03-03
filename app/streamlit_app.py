@@ -1,6 +1,6 @@
 import streamlit as st
-import uuid
 
+from components.login import render_login
 from components.sidebar import render_sidebar
 from components.chat_ui import render_chat
 from components.tools_panel import render_tools
@@ -14,18 +14,21 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# ── Auth gate ─────────────────────────────────────────────────────────────────
+if "jwt" not in st.session_state:
+    render_login()
+    st.stop()
+
+# ── Main app ──────────────────────────────────────────────────────────────────
 st.markdown(GLOBAL_CSS, unsafe_allow_html=True)
 
-if "user_id" not in st.session_state:
-    st.session_state.user_id = str(uuid.uuid4())
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 if "mhi_log" not in st.session_state:
     st.session_state.mhi_log = []
 
-voice_enabled = render_sidebar(st.session_state.user_id)
+voice_enabled = render_sidebar()
 
-# ── Header ────────────────────────────────────────────────────────────────────
 st.markdown("""
 <div class="app-header">
     <div class="app-header-icon">
@@ -43,7 +46,6 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# ── Tabs ──────────────────────────────────────────────────────────────────────
 mhi_count = len(st.session_state.mhi_log)
 dashboard_label = f"Dashboard ({mhi_count})" if mhi_count else "Dashboard"
 
@@ -54,10 +56,7 @@ tab_chat, tab_dashboard, tab_tools = st.tabs([
 ])
 
 with tab_chat:
-    render_chat(
-        user_id=st.session_state.user_id,
-        voice_enabled=voice_enabled,
-    )
+    render_chat(voice_enabled=voice_enabled)
 
 with tab_dashboard:
     render_dashboard()

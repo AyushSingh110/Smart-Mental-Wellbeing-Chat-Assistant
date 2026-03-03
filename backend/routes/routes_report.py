@@ -4,13 +4,17 @@ from backend.database.mongo_client import MongoClient
 from backend.dependencies import get_db
 from backend.services.report_service import ReportService
 from backend.services.llm_service import generate_llm_response
+from backend.dependencies import get_current_user
+from bson import ObjectId
 
 router = APIRouter(prefix="/report", tags=["Report"])
 report_service = ReportService()
 
-
-@router.get("/{user_id}")
-async def generate_report(user_id: str, db: MongoClient = Depends(get_db)):
+@router.get("/")
+async def generate_report(
+    user_id: ObjectId = Depends(get_current_user),
+    db: MongoClient = Depends(get_db)
+):
 
     conversations = await db.get_recent_conversations(user_id, limit=50)
 

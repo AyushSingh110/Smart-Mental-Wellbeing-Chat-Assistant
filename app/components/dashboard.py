@@ -183,14 +183,11 @@ def render_dashboard() -> None:
         """, unsafe_allow_html=True)
 
     # ── Download Report ────────────────────────────────────────────────────────
-    _render_download_report(
-        user_id=st.session_state.get("user_id", "unknown"),
-        avg_mhi=avg_mhi,
-        df=df,
-    )
+    _render_download_report(avg_mhi, df)
+    
 
 
-def _render_download_report(user_id: str, avg_mhi: float, df: pd.DataFrame) -> None:
+def _render_download_report(avg_mhi: float, df: pd.DataFrame) -> None:
     st.markdown("<div style='height:2rem'></div>", unsafe_allow_html=True)
     st.markdown("""
     <div style="border-top:1px solid rgba(255,255,255,0.07); padding-top:1.5rem;
@@ -221,7 +218,7 @@ def _render_download_report(user_id: str, avg_mhi: float, df: pd.DataFrame) -> N
         if st.button("Download PDF Report", use_container_width=True, key="dl_report"):
             with st.spinner("Generating report…"):
                 try:
-                    pdf_bytes = get_report(user_id)
+                    pdf_bytes = get_report()
                     from datetime import datetime
                     filename = f"wellbeing_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
                     st.download_button(

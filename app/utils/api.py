@@ -1,39 +1,79 @@
 import requests
+import streamlit as st
 
 BACKEND_URL = "http://localhost:8000"
 
 
-def send_chat(user_id: str, message: str) -> dict:
-    payload = {
-        "user_id": user_id,
-        "message": message,
+def _get_headers():
+    if "jwt" not in st.session_state or not st.session_state.jwt:
+        raise Exception("User not authenticated")
+
+    return {
+        "Authorization": f"Bearer {st.session_state.jwt}"
     }
-    response = requests.post(f"{BACKEND_URL}/chat", json=payload, timeout=20)
+
+
+# -----------------------------
+# Chat
+# -----------------------------
+def send_chat(message: str) -> dict:
+    headers = {
+        "Authorization": f"Bearer {st.session_state.jwt}"
+    }
+
+    response = requests.post(
+        f"{BACKEND_URL}/chat",
+        json={"message": message},
+        headers=headers,
+        timeout=20
+    )
+
     response.raise_for_status()
     return response.json()
 
 
-def submit_assessment(user_id: str, phq2: int, gad2: int):
+# -----------------------------
+# Assessment
+# -----------------------------
+def submit_assessment(phq2: int, gad2: int):
     payload = {
-        "user_id": user_id,
         "phq2": phq2,
         "gad2": gad2,
     }
-    response = requests.post(f"{BACKEND_URL}/assessment", json=payload, timeout=10)
+
+    response = requests.post(
+        f"{BACKEND_URL}/assessment",
+        json=payload,
+        headers=_get_headers(),
+        timeout=10
+    )
+
     response.raise_for_status()
 
-def get_report(user_id: str):
+
+# -----------------------------
+# PDF Report
+# -----------------------------
+def get_report():
     response = requests.get(
-        f"{BACKEND_URL}/report/{user_id}",
+        f"{BACKEND_URL}/report",
+        headers=_get_headers(),
         timeout=20
     )
+
     response.raise_for_status()
     return response.content
 
-def get_timeline(user_id: str):
+
+# -----------------------------
+# Timeline
+# -----------------------------
+def get_timeline():
     response = requests.get(
-        f"{BACKEND_URL}/user/{user_id}/timeline",
+        f"{BACKEND_URL}/user/timeline",
+        headers=_get_headers(),
         timeout=10
     )
+
     response.raise_for_status()
     return response.json()

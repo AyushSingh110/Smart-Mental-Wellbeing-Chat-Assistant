@@ -2,16 +2,13 @@ import streamlit as st
 from utils.api import submit_assessment
 
 
-def render_sidebar(user_id: str) -> bool:
+def render_sidebar() -> bool:
 
     with st.sidebar:
         st.markdown(f"""
         <div class="sidebar-brand">
             <div class="sidebar-brand-dot"></div>
             <div class="sidebar-brand-text">Well-Being AI</div>
-        </div>
-        <div style="font-size:0.72rem; color:#546070; margin-bottom:1rem; padding-bottom:0.8rem; border-bottom:1px solid rgba(255,255,255,0.07);">
-            Session · <span style="font-family:'JetBrains Mono',monospace; color:#63b3ed;">{user_id[:8]}…</span>
         </div>
         """, unsafe_allow_html=True)
 
@@ -24,7 +21,7 @@ def render_sidebar(user_id: str) -> bool:
 
         if st.button("Submit Assessment", use_container_width=True):
             try:
-                submit_assessment(user_id, phq1 + phq2, gad1 + gad2)
+                submit_assessment(phq1 + phq2, gad1 + gad2)
                 st.success("Assessment recorded")
             except Exception:
                 st.error("Backend unavailable")

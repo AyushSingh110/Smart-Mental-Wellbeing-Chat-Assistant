@@ -16,7 +16,7 @@ class MongoClient:
         self.conversations = self.db["conversations"]
         self.users = self.db["users"]
 
-    async def get_recent_conversations(self, user_id: str, limit: int = 50):
+    async def get_recent_conversations(self, user_id, limit: int = 50):
         cursor = (
             self.conversations.find({"user_id": user_id})
             .sort("timestamp", -1)
@@ -26,3 +26,6 @@ class MongoClient:
 
     async def close(self):
         self.client.close()
+
+
+mongo_client = MongoClient()
