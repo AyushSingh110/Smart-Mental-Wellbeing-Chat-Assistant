@@ -1,21 +1,22 @@
 from __future__ import annotations
-
 from backend.config import settings
 
-
-# Negative emotion labels increase risk; neutral reduces it
-_HIGH_RISK_EMOTIONS = {"sadness", "fear", "anger"}
-_MODERATE_RISK_EMOTIONS = {"stress", "anxiety"}
-_LOW_RISK_EMOTIONS = {"neutral"}
-
-# Per-emotion multipliers applied to the raw emotion score
 _EMOTION_MULTIPLIERS = {
-    "sadness": 1.20,
-    "fear":    1.15,
-    "anger":   1.10,
-    "stress":  1.05,
-    "anxiety": 1.05,
-    "neutral": 0.60,
+    "sadness": 1.25,
+    "fear":    1.20,
+    "anger":   1.15,
+    "stress":  1.08,
+    "anxiety": 1.08,
+    "neutral": 0.55,
+}
+
+# MHI hard ceilings by crisis tier — no matter what other factors score,
+# these ceilings prevent crisis language from staying in "Mild Stress"
+_CRISIS_MHI_CEILINGS = {
+    "active":   25.0,   # Crisis Risk
+    "passive":  42.0,   # High Risk
+    "distress": 62.0,   # Moderate Distress
+    "none":    100.0,   # No ceiling
 }
 
 
@@ -30,9 +31,8 @@ class MentalHealthMatrix:
             "H": settings.WEIGHT_HISTORY,
         }
 
-    def _adjust_emotion(self, emotion_label: str, emotion_score: float) -> float:
-        multiplier = _EMOTION_MULTIPLIERS.get(emotion_label, 1.0)
-        return min(emotion_score * multiplier, 1.0)
+    def _adjust_emotion(self, label: str, score: float) -> float:
+        return min(score * _EMOTION_MULTIPLIERS.get(label, 1.0), 1.0)
 
     def compute(
         self,
@@ -42,51 +42,47 @@ class MentalHealthMatrix:
         screening_score: float = 0.0,
         behavioral_score: float = 0.0,
         history_score: float = 0.5,
+        crisis_tier: str = "none",
     ) -> float:
-        """
-        Computes the Mental Health Index (MHI) on a [0, 100] scale.
-        Higher MHI = better mental health.
-
-        Parameters
-        ----------
-        emotion_score     : Raw probability from EmotionService [0, 1]
-        crisis_score      : Risk probability from CrisisService [0, 1]
-        emotion_label     : Dominant emotion label (used for multiplier)
-        screening_score   : Normalized PHQ-2/GAD-2 score from ScreeningService [0, 1]
-        behavioral_score  : Risk score from BehavioralService [0, 1]
-        history_score     : Trend-weighted risk from HistoryService [0, 1]
-        """
         adjusted_emotion = self._adjust_emotion(emotion_label, emotion_score)
 
-        # Crisis score gets a non-linear boost at high values
-        boosted_crisis = crisis_score ** 0.75
+        # Non-linear crisis amplification — steeper curve at high values
+        boosted_crisis = crisis_score ** 0.60
+
+        # Behavioral and screening scores amplify each other when both are elevated
+        amplified_behavioral = behavioral_score * (1.0 + 0.4 * screening_score)
+        amplified_screening  = screening_score  * (1.0 + 0.3 * behavioral_score)
 
         total_risk = (
             self.weights["E"] * adjusted_emotion +
             self.weights["C"] * boosted_crisis +
-            self.weights["S"] * screening_score +
-            self.weights["B"] * behavioral_score +
+            self.weights["S"] * min(amplified_screening, 1.0) +
+            self.weights["B"] * min(amplified_behavioral, 1.0) +
             self.weights["H"] * history_score
         )
 
-        # Normalize weights sum to validate (defensive)
         weight_sum = sum(self.weights.values())
         normalized_risk = total_risk / weight_sum
+        raw_mhi = max(0.0, min(100.0, 100.0 * (1.0 - normalized_risk)))
 
-        mhi = max(0.0, min(100.0, 100.0 * (1.0 - normalized_risk)))
-        return round(mhi, 2)
+        # Apply hard ceiling based on crisis tier — this is the critical fix
+        ceiling = _CRISIS_MHI_CEILINGS.get(crisis_tier, 100.0)
+        return round(min(raw_mhi, ceiling), 2)
 
-    def categorize(self, mhi: float, crisis_score: float) -> str:
-        if crisis_score >= settings.CRISIS_PROBABILITY_THRESHOLD:
-            return "Crisis"
+    def categorize(self, mhi: float, crisis_score: float, crisis_tier: str = "none") -> str:
+        # Hard category override for crisis tiers
+        if crisis_tier == "active" or crisis_score >= 0.85:
+            return "Crisis Risk"
+        if crisis_tier == "passive" or crisis_score >= settings.CRISIS_PROBABILITY_THRESHOLD:
+            return "High Risk"
         if mhi >= 80:
-            return "Normal"
+            return "Stable"
         if mhi >= 65:
             return "Mild Stress"
         if mhi >= 50:
-            return "Moderate Stress"
+            return "Moderate Distress"
         if mhi >= 35:
-            return "Anxiety Risk"
+            return "High Risk"
         if mhi >= 20:
             return "Depression Risk"
-        return "Crisis"
+        return "Crisis Risk"

@@ -1,28 +1,40 @@
 import streamlit as st
 import requests
 from datetime import datetime
-from utils.voice import render_mic_component, speak_text
+from utils.voice import render_mic_component, speak_text, render_greeting, cancel_speech
 
 BACKEND_URL = "http://localhost:8000"
 
-SPEAKER_SVG = """<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+SPEAKER_SVG = """<svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
     <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
     <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
 </svg>"""
 
-ALERT_SVG = """<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+ALERT_SVG = """<svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <circle cx="12" cy="12" r="10"/>
     <line x1="12" y1="8" x2="12" y2="12"/>
     <line x1="12" y1="16" x2="12.01" y2="16"/>
 </svg>"""
 
+_MIC_OVERLAY_CSS = """
+<style>
+[data-testid="stChatInput"] textarea { padding-right: 5.5rem !important; }
+[data-testid="stBottom"] { position: relative !important; }
+[data-testid="stBottom"] > div { position: relative !important; }
+[data-testid="stBottom"] iframe {
+    position: absolute !important;
+    right: 54px !important; bottom: 13px !important;
+    width: 36px !important; height: 36px !important;
+    z-index: 200 !important; border: none !important;
+    background: transparent !important; pointer-events: all !important;
+}
+</style>
+"""
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Auth
-# ─────────────────────────────────────────────────────────────────────────────
+# ── Auth ──────────────────────────────────────────────────────────────────────
 
 def _get_headers() -> dict:
     jwt = st.session_state.get("jwt")
@@ -31,9 +43,7 @@ def _get_headers() -> dict:
     return {"Authorization": f"Bearer {jwt}"}
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Backend calls — unchanged from your original
-# ─────────────────────────────────────────────────────────────────────────────
+# ── Backend calls (unchanged) ─────────────────────────────────────────────────
 
 def send_chat(message: str) -> dict:
     response = requests.post(
@@ -76,90 +86,64 @@ def get_timeline() -> list:
     return response.json()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# UI helpers
-# ─────────────────────────────────────────────────────────────────────────────
+# ── Empty state with greeting orb ────────────────────────────────────────────
 
-def _empty_state() -> None:
+def _empty_state(voice_enabled: bool) -> None:
     st.markdown("""
-    <div style="text-align:center; padding:4rem 0 2rem 0;">
-        <div style="
-            width:52px; height:52px;
-            background:linear-gradient(135deg,#63b3ed,#4fd1c5);
-            border-radius:16px;
-            display:inline-flex; align-items:center; justify-content:center;
-            margin-bottom:1.2rem;
-            box-shadow: 0 8px 32px rgba(99,179,237,0.2);
-        ">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#080c14"
-                 stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06
-                         a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78
-                         1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
-            </svg>
-        </div>
-        <div style="font-size:1.05rem; font-weight:600; color:#e8edf5; margin-bottom:0.5rem;
-                    letter-spacing:-0.01em;">
+    <div style="text-align:center; padding:2.5rem 0 0.5rem 0;">
+        <div style="font-size:1.05rem; font-weight:600; color:#e8edf5;
+                    margin-bottom:0.5rem; letter-spacing:-0.01em;">
             How are you feeling today?
         </div>
-        <div style="font-size:0.82rem; color:#546070; line-height:1.9; max-width:320px; margin:0 auto;">
+        <div style="font-size:0.82rem; color:#546070; line-height:1.9;
+                    max-width:320px; margin:0 auto 1.5rem auto;">
             This is your private space to share openly.<br>
             I'll listen, understand, and support you.
         </div>
-        <div style="display:flex; justify-content:center; gap:1.5rem; margin-top:2rem;">
-            <div style="font-size:0.73rem; color:#3a4555; display:flex; align-items:center; gap:6px;">
-                <div style="width:6px;height:6px;border-radius:50%;background:#63b3ed;"></div>
-                Emotion aware
-            </div>
-            <div style="font-size:0.73rem; color:#3a4555; display:flex; align-items:center; gap:6px;">
-                <div style="width:6px;height:6px;border-radius:50%;background:#4fd1c5;"></div>
-                Always private
-            </div>
-            <div style="font-size:0.73rem; color:#3a4555; display:flex; align-items:center; gap:6px;">
-                <div style="width:6px;height:6px;border-radius:50%;background:#b794f4;"></div>
-                CBT guided
-            </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Render greeting orb — it auto-speaks when voice is enabled
+    if voice_enabled:
+        render_greeting("your Well-Being companion")
+    else:
+        # Silent orb (visual only, no auto-speak)
+        st.markdown("""
+        <div style="display:flex; justify-content:center; margin-bottom:1.5rem;">
+            <div style="
+                width:62px; height:62px; border-radius:50%;
+                background: radial-gradient(circle at 38% 35%, #63b3ed 0%, #4fd1c5 55%, #7c3aed 100%);
+                animation: idleOrb 3.5s ease-in-out infinite;
+                box-shadow: 0 8px 32px rgba(99,179,237,0.2);
+            "></div>
+        </div>
+        <style>
+        @keyframes idleOrb {
+            0%,100% { box-shadow:0 0 20px rgba(99,179,237,0.25); transform:scale(1);    }
+            50%      { box-shadow:0 0 36px rgba(79,209,197,0.38); transform:scale(1.05); }
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
+    st.markdown("""
+    <div style="display:flex; justify-content:center; gap:1.5rem; margin-top:0.5rem;">
+        <div style="font-size:0.73rem; color:#3a4555; display:flex; align-items:center; gap:6px;">
+            <div style="width:6px;height:6px;border-radius:50%;background:#63b3ed;"></div>
+            Emotion aware
+        </div>
+        <div style="font-size:0.73rem; color:#3a4555; display:flex; align-items:center; gap:6px;">
+            <div style="width:6px;height:6px;border-radius:50%;background:#4fd1c5;"></div>
+            Always private
+        </div>
+        <div style="font-size:0.73rem; color:#3a4555; display:flex; align-items:center; gap:6px;">
+            <div style="width:6px;height:6px;border-radius:50%;background:#b794f4;"></div>
+            CBT guided
         </div>
     </div>
     """, unsafe_allow_html=True)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Mic — positioned inside the Streamlit chat input bar
-# ─────────────────────────────────────────────────────────────────────────────
-
-_MIC_OVERLAY_CSS = """
-<style>
-/* Push the chat textarea right so text doesn't overlap the mic icon */
-[data-testid="stChatInput"] textarea {
-    padding-right: 5.5rem !important;
-}
-
-/* Overlay the mic iframe over the right side of the input bar */
-[data-testid="stBottom"] {
-    position: relative !important;
-}
-[data-testid="stBottom"] > div {
-    position: relative !important;
-}
-[data-testid="stBottom"] iframe {
-    position: absolute !important;
-    right: 54px !important;
-    bottom: 13px !important;
-    width: 36px !important;
-    height: 36px !important;
-    z-index: 200 !important;
-    border: none !important;
-    background: transparent !important;
-    pointer-events: all !important;
-}
-</style>
-"""
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Main render
-# ─────────────────────────────────────────────────────────────────────────────
+# ── Main render ───────────────────────────────────────────────────────────────
 
 def render_chat(voice_enabled: bool = False) -> None:
 
@@ -168,17 +152,16 @@ def render_chat(voice_enabled: bool = False) -> None:
     if "mhi_log" not in st.session_state:
         st.session_state.mhi_log = []
 
-    # Empty state
+    # Show empty state with greeting orb on first load
     if not st.session_state.chat_history:
-        _empty_state()
+        _empty_state(voice_enabled)
 
-    # Chat history
+    # Render chat history
     for msg in st.session_state.chat_history:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    # Inject mic overlay CSS + component
-    # The iframe is absolutely positioned by CSS to sit inside the input bar
+    # Mic inside the input bar
     st.markdown(_MIC_OVERLAY_CSS, unsafe_allow_html=True)
     render_mic_component()
 
@@ -187,12 +170,15 @@ def render_chat(voice_enabled: bool = False) -> None:
     if not user_input:
         return
 
-    # User message
+    # Stop any speaking before user sends new message
+    cancel_speech()
+
+    # Render user bubble
     st.session_state.chat_history.append({"role": "user", "content": user_input})
     with st.chat_message("user"):
         st.markdown(user_input)
 
-    # Assistant response
+    # Render assistant bubble
     with st.chat_message("assistant"):
         with st.spinner(""):
             try:
@@ -202,8 +188,13 @@ def render_chat(voice_enabled: bool = False) -> None:
                 mhi          = data.get("mhi", 0)
                 category     = data.get("category", "")
                 crisis_score = data.get("crisis_score", 0)
+                crisis_tier  = data.get("crisis_tier", "none")
+                emotion_label = max(
+                    data.get("emotion_scores", {"neutral": 1.0}),
+                    key=data.get("emotion_scores", {"neutral": 1.0}).get,
+                ) if data.get("emotion_scores") else "neutral"
 
-                # Store MHI silently for the Dashboard
+                # Store MHI silently for Dashboard
                 if mhi:
                     st.session_state.mhi_log.append({
                         "timestamp": datetime.now().isoformat(),
@@ -214,9 +205,9 @@ def render_chat(voice_enabled: bool = False) -> None:
                 st.session_state.chat_history.append({"role": "assistant", "content": reply})
                 st.markdown(reply)
 
-                # Voice output
+                # Voice output — emotion-aware + crisis-aware
                 if voice_enabled and reply:
-                    speak_text(reply)
+                    speak_text(reply, emotion_label=emotion_label, crisis_tier=crisis_tier)
                     st.markdown(f"""
                     <div class="speaking-indicator">
                         {SPEAKER_SVG}
@@ -229,13 +220,13 @@ def render_chat(voice_enabled: bool = False) -> None:
                     </div>
                     """, unsafe_allow_html=True)
 
-                # Crisis alert
-                if crisis_score > 0.7:
+                # Crisis alert banner — shown for passive tier and above
+                if crisis_tier in ("active", "passive") or crisis_score > 0.60:
                     st.markdown(f"""
                     <div class="crisis-alert" style="margin-top:12px;">
                         {ALERT_SVG}
-                        <span>Immediate support is recommended. Please reach out to emergency
-                        services, a crisis helpline, or a trusted person nearby.</span>
+                        <span>If you're in distress, please reach out to a crisis helpline
+                        or someone you trust. You don't have to face this alone.</span>
                     </div>
                     """, unsafe_allow_html=True)
 
@@ -245,3 +236,6 @@ def render_chat(voice_enabled: bool = False) -> None:
                     st.error("Session expired. Please log in again.")
                 else:
                     st.error(f"Connection error: {err}")
+
+   
+  

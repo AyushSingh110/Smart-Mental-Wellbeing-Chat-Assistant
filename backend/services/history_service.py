@@ -1,48 +1,80 @@
 from __future__ import annotations
 
-import re
-from backend.config import settings
+from bson import ObjectId
+from motor.motor_asyncio import AsyncIOMotorCollection
 
 
-# Weighted pattern groups — each group represents a behavioral risk dimension.
-# Scores are normalized to [0, 1] before returning.
+# Number of recent sessions used for trend calculation
+_HISTORY_WINDOW = 5
 
-_PATTERNS: list[tuple[str, float]] = [
-    # Social withdrawal
-    (r"\b(isolat(e|ed|ing)|withdrew|withdrawn|avoid(ing)? (people|others|friends|family))\b", 0.75),
-    (r"\b(don'?t want to (see|talk|meet)|stay(ing)? home|lock(ed)? myself)\b", 0.65),
-
-    # Activity avoidance
-    (r"\b(stopped (going|working|exercising|eating|sleeping)|can'?t (get up|function|do anything))\b", 0.70),
-    (r"\b(no (motivation|energy|interest)|lost interest|don'?t enjoy)\b", 0.60),
-
-    # Negative coping
-    (r"\b(drink(ing)?|alcohol|smok(e|ing)|using drugs?|can'?t stop eating)\b", 0.65),
-    (r"\b(binge|purge|starv(e|ing)|not eat(ing)?)\b", 0.70),
-
-    # Behavioral despair signals
-    (r"\b(giv(e|ing) up|what'?s the point|nothing matters|pointless|hopeless)\b", 0.80),
-    (r"\b(can'?t (sleep|focus|concentrate)|insomnia|nightmares)\b", 0.55),
-
-    # Self-neglect
-    (r"\b(don'?t (shower|eat|leave (bed|house))|stopped (caring|trying))\b", 0.70),
-]
-
-_MAX_POSSIBLE = sum(w for _, w in _PATTERNS)
+# Decay factor: more recent sessions have higher influence
+_DECAY = 0.8
 
 
-class BehavioralService:
+class HistoryService:
 
-    def predict(self, text: str) -> float:
+    def __init__(self, conversations_col: AsyncIOMotorCollection):
+        self.col = conversations_col
+
+    async def compute(self, user_id: ObjectId) -> float:
         """
-        Returns a behavioral risk score in [0, 1].
-        Higher = more behavioral risk signals detected.
+        Returns a history-based risk score in [0, 1].
+
+        Fetches the last N MHI scores, inverts them to risk space,
+        then applies exponential decay weighting so recent sessions
+        matter more than older ones.
+
+        Returns 0.5 (neutral) when no history exists.
         """
-        lowered = text.lower()
-        raw = 0.0
+        cursor = (
+            self.col.find(
+                {"user_id": user_id},
+                {"mhi": 1, "_id": 0}
+            )
+            .sort("timestamp", -1)
+            .limit(_HISTORY_WINDOW)
+        )
 
-        for pattern, weight in _PATTERNS:
-            if re.search(pattern, lowered):
-                raw += weight
+        docs = await cursor.to_list(length=_HISTORY_WINDOW)
 
-        return round(min(raw / _MAX_POSSIBLE, 1.0), 4)
+        if not docs:
+            return 0.5
+
+        # Convert MHI [0,100] → risk [0,1]: low MHI = high risk
+        risk_scores = [(100 - d["mhi"]) / 100 for d in docs]
+
+        # Exponential decay weights: index 0 = most recent
+        weights = [_DECAY ** i for i in range(len(risk_scores))]
+        total_weight = sum(weights)
+
+        weighted_risk = sum(r * w for r, w in zip(risk_scores, weights)) / total_weight
+
+        return round(weighted_risk, 4)
+
+    async def get_trend(self, user_id: ObjectId) -> str:
+        """
+        Returns a human-readable trend label based on last 3 sessions.
+        Used optionally by the report or dashboard.
+        """
+        cursor = (
+            self.col.find(
+                {"user_id": user_id},
+                {"mhi": 1, "_id": 0}
+            )
+            .sort("timestamp", -1)
+            .limit(3)
+        )
+
+        docs = await cursor.to_list(length=3)
+
+        if len(docs) < 2:
+            return "insufficient_data"
+
+        scores = [d["mhi"] for d in docs]
+        delta = scores[0] - scores[-1]
+
+        if delta > 5:
+            return "improving"
+        if delta < -5:
+            return "declining"
+        return "stable"

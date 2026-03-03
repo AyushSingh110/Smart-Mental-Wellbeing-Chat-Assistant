@@ -4,7 +4,7 @@ import logging
 from contextlib import asynccontextmanager
 from datetime import datetime
 
-from fastapi import FastAPI, HTTPException, Query, Depends
+from fastapi import FastAPI, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -38,23 +38,23 @@ mongo = AsyncIOMotorClient(
     serverSelectionTimeoutMS=5000,
 )
 
-db = mongo[settings.MONGO_DB_NAME]
+db                = mongo[settings.MONGO_DB_NAME]
 conversations_col = db["conversations"]
-users_col = db["users"]
+users_col         = db["users"]
 
 # Stateless services — instantiated once at startup
-emotion_service   = EmotionService()
-crisis_service    = CrisisService()
-intent_service    = IntentService()
-matrix_service    = MentalHealthMatrix()
-rag_service       = RAGService()
-safety_service    = SafetyService()
+emotion_service    = EmotionService()
+crisis_service     = CrisisService()
+intent_service     = IntentService()
+matrix_service     = MentalHealthMatrix()
+rag_service        = RAGService()
+safety_service     = SafetyService()
 behavioral_service = BehavioralService()
 screening_service  = ScreeningService()
+history_service    = HistoryService(conversations_col)
 
-# HistoryService requires a DB collection reference
-history_service = HistoryService(conversations_col)
 
+# ── Schemas ───────────────────────────────────────────────────────────────────
 
 class ChatRequest(BaseModel):
     message: str
@@ -64,10 +64,18 @@ class ChatResponse(BaseModel):
     response: str
     emotion_scores: dict
     crisis_score: float
+    crisis_tier: str        # 'active' | 'passive' | 'distress' | 'none'
     intent: str
     mhi: int
     category: str
 
+
+class AssessmentRequest(BaseModel):
+    phq2: int
+    gad2: int
+
+
+# ── Lifespan ──────────────────────────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -79,6 +87,8 @@ async def lifespan(app: FastAPI):
     mongo.close()
     logger.info("Shutdown complete.")
 
+
+# ── App ───────────────────────────────────────────────────────────────────────
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -99,16 +109,20 @@ app.add_middleware(
 )
 
 
+# ── Routes ────────────────────────────────────────────────────────────────────
+
 @app.get("/", summary="Root – API info")
 def root():
     return {
-        "app": settings.APP_NAME,
+        "app":     settings.APP_NAME,
         "version": settings.APP_VERSION,
-        "docs": "/docs",
+        "docs":    "/docs",
         "endpoints": {
-            "POST /chat": "Send a message through the analysis pipeline",
-            "GET /user/history": "Conversation history",
-            "GET /user/timeline": "MHI timeline for charts",
+            "POST /chat":          "Full analysis + response pipeline",
+            "POST /assessment":    "Submit PHQ-2 / GAD-2 scores",
+            "GET  /user/history":  "Paginated conversation history",
+            "GET  /user/timeline": "MHI timeline for dashboard chart",
+            "GET  /report":        "Download PDF session report",
         },
     }
 
@@ -118,29 +132,41 @@ async def chat(
     body: ChatRequest,
     user_id: ObjectId = Depends(get_current_user),
 ):
-    # ── ML inference (synchronous, CPU-bound) ────────────────────────────────
-    emotion_scores  = emotion_service.predict(body.message)
-    emotion_label   = max(emotion_scores, key=emotion_scores.get)
-    emotion_score   = emotion_scores[emotion_label]
+    # ── Step 1: Synchronous ML inference ─────────────────────────────────────
+    emotion_scores   = emotion_service.predict(body.message)
+    emotion_label    = max(emotion_scores, key=emotion_scores.get)
+    emotion_score    = emotion_scores[emotion_label]
 
-    crisis_score    = crisis_service.predict(body.message)
-    intent          = intent_service.predict(body.message)
+    # crisis_score is the probability; crisis_tier is the semantic risk label.
+    # Both flow through every downstream service — this is the core fix.
+    crisis_score     = crisis_service.predict(body.message)
+    crisis_tier      = crisis_service.classify_tier(body.message)
+
+    intent           = intent_service.predict(body.message)
     behavioral_score = behavioral_service.predict(body.message)
 
-    # ── Async DB-dependent scoring ────────────────────────────────────────────
+    logger.debug(
+        "msg=%r | emotion=%s(%.2f) | crisis=%.2f | tier=%s | behavioral=%.2f",
+        body.message[:60], emotion_label, emotion_score,
+        crisis_score, crisis_tier, behavioral_score,
+    )
+
+    # ── Step 2: Async DB-dependent scoring ───────────────────────────────────
     history_score = await history_service.compute(user_id)
 
-    # ── Screening score: pulled from user profile if available ───────────────
-    # Defaults to 0.0 (no assessment submitted) — updated via /assessment route
     user_doc = await users_col.find_one(
         {"_id": user_id},
-        {"phq2_total": 1, "gad2_total": 1}
+        {"phq2_total": 1, "gad2_total": 1},
     )
     phq2 = int(user_doc.get("phq2_total", 0)) if user_doc else 0
     gad2 = int(user_doc.get("gad2_total", 0)) if user_doc else 0
     screening_score = screening_service.compute(phq2, gad2)
 
-    # ── MHI computation ───────────────────────────────────────────────────────
+    # ── Step 3: MHI computation ───────────────────────────────────────────────
+    # crisis_tier applies hard MHI ceilings inside matrix_service:
+    #   active  → MHI capped at 25   → always "Crisis Risk"
+    #   passive → MHI capped at 42   → always "High Risk"
+    #   distress→ MHI capped at 62   → at most "Moderate Distress"
     mhi = matrix_service.compute(
         emotion_score=emotion_score,
         crisis_score=crisis_score,
@@ -148,10 +174,18 @@ async def chat(
         screening_score=screening_score,
         behavioral_score=behavioral_score,
         history_score=history_score,
+        crisis_tier=crisis_tier,
     )
-    category = matrix_service.categorize(mhi, crisis_score)
+    category = matrix_service.categorize(mhi, crisis_score, crisis_tier)
 
-    # ── LLM response generation ───────────────────────────────────────────────
+    logger.debug(
+        "mhi=%.1f | category=%s | screening=%.2f | history=%.2f",
+        mhi, category, screening_score, history_score,
+    )
+
+    # ── Step 4: LLM response generation ──────────────────────────────────────
+    # For 'active' tier, safety_service will fully replace this output.
+    # For 'passive'/'distress', safety_service appends helpline info to it.
     llm_response = rag_service.generate_response(
         user_message=body.message,
         emotion_label=emotion_label,
@@ -159,20 +193,24 @@ async def chat(
         intent=intent,
         mental_health_index=mhi,
         crisis_probability=crisis_score,
+        crisis_tier=crisis_tier,
     )
 
+    # ── Step 5: Safety validation ─────────────────────────────────────────────
     final_response = safety_service.validate_response(
         response=llm_response,
         crisis_score=crisis_score,
+        crisis_tier=crisis_tier,
     )
 
-    # ── Persist conversation ──────────────────────────────────────────────────
+    # ── Step 6: Persist ───────────────────────────────────────────────────────
     await conversations_col.insert_one({
         "user_id":          user_id,
         "timestamp":        datetime.utcnow(),
         "message":          body.message,
         "emotion_scores":   emotion_scores,
         "crisis_score":     round(crisis_score, 4),
+        "crisis_tier":      crisis_tier,
         "behavioral_score": round(behavioral_score, 4),
         "screening_score":  round(screening_score, 4),
         "history_score":    round(history_score, 4),
@@ -185,38 +223,44 @@ async def chat(
         response=final_response,
         emotion_scores=emotion_scores,
         crisis_score=round(crisis_score, 4),
+        crisis_tier=crisis_tier,
         intent=intent,
         mhi=int(mhi),
         category=category,
     )
 
 
-@app.post("/assessment", summary="Submit PHQ-2 / GAD-2 assessment scores")
+@app.post("/assessment", summary="Submit PHQ-2 / GAD-2 screening scores")
 async def submit_assessment(
-    phq2: int,
-    gad2: int,
+    body: AssessmentRequest,
     user_id: ObjectId = Depends(get_current_user),
 ):
-    """
-    Stores the latest PHQ-2 and GAD-2 totals on the user document.
-    These are picked up by the /chat route to compute screening_score.
-    """
-    phq2 = max(0, min(phq2, 6))
-    gad2 = max(0, min(gad2, 6))
+    phq2 = max(0, min(body.phq2, 6))
+    gad2 = max(0, min(body.gad2, 6))
 
     await users_col.update_one(
         {"_id": user_id},
         {"$set": {
-            "phq2_total": phq2,
-            "gad2_total": gad2,
+            "phq2_total":            phq2,
+            "gad2_total":            gad2,
             "assessment_updated_at": datetime.utcnow(),
         }},
         upsert=False,
     )
-    return {"status": "ok", "phq2": phq2, "gad2": gad2}
+
+    screening_score = screening_service.compute(phq2, gad2)
+    flags           = screening_service.get_flags(phq2, gad2)
+
+    return {
+        "status":          "ok",
+        "phq2":            phq2,
+        "gad2":            gad2,
+        "screening_score": screening_score,
+        **flags,
+    }
 
 
-@app.get("/user/history", summary="Conversation history")
+@app.get("/user/history", summary="Paginated conversation history")
 async def user_history(
     limit: int = Query(default=10, ge=1, le=100),
     user_id: ObjectId = Depends(get_current_user),
@@ -229,11 +273,10 @@ async def user_history(
     docs = await cursor.to_list(length=limit)
     for d in docs:
         d.pop("_id", None)
-
     return {"count": len(docs), "conversations": docs}
 
 
-@app.get("/user/timeline", summary="MHI timeline for trend chart")
+@app.get("/user/timeline", summary="MHI timeline for dashboard chart")
 async def user_timeline(
     limit: int = Query(default=30, ge=1, le=100),
     user_id: ObjectId = Depends(get_current_user),
@@ -241,10 +284,9 @@ async def user_timeline(
     cursor = (
         conversations_col.find(
             {"user_id": user_id},
-            {"timestamp": 1, "mhi": 1, "category": 1, "_id": 0}
+            {"timestamp": 1, "mhi": 1, "category": 1, "crisis_tier": 1, "_id": 0},
         )
         .sort("timestamp", 1)
         .limit(limit)
     )
-    docs = await cursor.to_list(length=limit)
-    return docs
+    return await cursor.to_list(length=limit)
