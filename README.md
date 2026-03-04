@@ -1,10 +1,10 @@
-🧠 Smart Mental Well-Being Assistant
+🧠** Smart Mental Well-Being Assistant**
 
 An AI-powered mental health support assistant designed to understand emotional signals from user conversations and provide supportive responses while tracking a Mental Health Index (MHI) to monitor well-being trends.
 
 The system integrates machine learning models, behavioral analysis, conversational AI, and safety mechanisms to deliver empathetic support while detecting potential high-risk situations.
 
-🌟 Key Capabilities
+🌟 **Key Capabilities**
 
 The assistant is designed to act as a supportive conversational companion that can:
 
@@ -16,7 +16,7 @@ The assistant is designed to act as a supportive conversational companion that c
 
 Unlike traditional chatbots, this system evaluates multiple psychological indicators simultaneously to produce a more realistic well-being assessment.
 
-📊 Mental Health Index (MHI)
+📊 **Mental Health Index (MHI)**
 
 The Mental Health Index (MHI) is a score between 0 and 100 representing a user's overall mental well-being based on conversation analysis.
 
@@ -29,7 +29,7 @@ Score Range	Category
 
 The MHI is updated after each conversation message using multiple signals.
 
-🧩 AI Signal Analysis
+🧩** AI Signal Analysis**
 
 To evaluate mental health signals, the system combines several independent analysis modules.
 
@@ -173,7 +173,7 @@ Speech technologies used:
 🎙 Faster-Whisper – speech recognition
 🔊 pyttsx3 / gTTS – speech synthesis
 
-🏗 System Architecture
+🏗 **System Architecture**
 Backend Structure
 backend/
 │
@@ -208,7 +208,7 @@ backend/
 
 Each component is modular to allow independent improvement of AI subsystems.
 
-🔄 System Workflow
+🔄** System Workflow**
 
 The assistant processes every message through a multi-stage analysis pipeline.
 
