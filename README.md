@@ -1,263 +1,426 @@
-🧠 Smart Mental Well-Being Chat Assistant
+Smart Mental Well-Being Assistant
 
-An AI-powered mental well-being assistant that combines:
+An AI-powered mental health support assistant that analyzes emotional signals from user conversations and provides supportive responses while monitoring a Mental Health Index (MHI) to track well-being trends.
+
+The system combines machine learning models, rule-based behavioral analysis, conversational AI, and safety escalation logic to provide supportive interaction while identifying high-risk situations.
+
+Overview
+
+The Smart Mental Well-Being Assistant is designed to act as a supportive conversational companion.
+
+The system:
+
+Detects emotional signals
+
+Identifies crisis risk
+
+Tracks mental health trends
+
+Generates supportive responses
+
+Escalates to crisis support when necessary
+
+Unlike simple chatbots, the assistant uses a multi-signal mental health scoring system that evaluates emotional, behavioral, screening, and historical indicators.
+
+Core Features
+AI Mental Health Analysis
+
+Analyzes user messages using multiple signals:
 
 Emotion detection
 
-Crisis risk assessment
+Crisis detection
 
-Mental Health Index (MHI) scoring
+Behavioral patterns
 
-Retrieval-Augmented CBT support
+Psychological screening scores
 
-Voice-to-voice conversational interface
+Conversation history trends
 
-Session analytics dashboard
+Mental Health Index (MHI)
 
-AI-generated PDF session reports
+The system calculates a Mental Health Index (0–100) representing overall well-being.
 
-Built using FastAPI + Streamlit + MongoDB + FAISS + Gemini/OpenAI LLM.
+Range	Category
+80 – 100	Stable
+65 – 79	Mild Stress
+45 – 64	Moderate Distress
+25 – 44	High Risk
+0 – 24	Crisis Risk
 
-System Overview
+The index is updated every conversation message.
 
-This system is designed to provide structured, emotionally intelligent mental well-being support in a conversational format.
+Crisis Detection & Safety Escalation
 
-It goes beyond simple chatbot replies by:
+The system detects signals such as:
 
-Analyzing emotional state
+self-harm intent
 
-Estimating crisis probability
+suicide ideation
 
-Computing a Mental Health Index (MHI)
+hopelessness language
 
-Retrieving relevant CBT knowledge
+behavioral withdrawal
 
-Generating grounded, safe responses
+When high risk is detected, the assistant:
 
-Tracking trends over time
+bypasses the LLM response
 
-Producing downloadable session reports
+returns crisis support messaging
 
-🏗️ Architecture
-Backend (FastAPI)
+provides helpline resources
 
-EmotionService
+Conversational AI Support
 
-CrisisService
+The assistant provides supportive responses that aim to:
 
-IntentService
+validate emotions
 
-MentalHealthMatrix (MHI scoring)
+encourage small coping strategies
 
-RAGService (FAISS + SentenceTransformer)
+guide reflection
 
-LLMService (Gemini / OpenAI)
+promote seeking professional support when necessary
 
-SafetyService
+Dashboard Monitoring
 
-MongoDB (Motor async client)
+The dashboard displays:
 
-ReportService (PDF generation using ReportLab)
+Mental Health Index gauge
 
-Frontend (Streamlit Modular UI)
-app/
+Well-being trend over time
+
+Session statistics
+
+Risk category history
+
+Tech Stack
+Backend
+
+FastAPI
+MongoDB (Motor Async Driver)
+JWT Authentication
+
+AI & Machine Learning
+
+Transformers (HuggingFace)
+DistilBERT fine-tuned models
+Sentence Transformers
+FAISS vector search
+OpenAI / Gemini LLM support
+
+Frontend
+
+Streamlit
+
+Voice Processing
+
+Faster Whisper (Speech-to-Text)
+pyttsx3 / gTTS (Text-to-Speech)
+
+Data Processing
+
+Python
+Regex-based behavioral detection
+
+Project Architecture
+backend/
 │
-├── components/
-│   ├── chat_ui.py
-│   ├── dashboard.py
-│   ├── sidebar.py
-│   ├── tools_panel.py
+├── auth/
+│   ├── auth_router.py
+│   └── auth_utils.py
 │
-├── utils/
-│   ├── api.py
-│   ├── voice.py
+├── database/
+│   └── mongo_client.py
 │
-├── streamlit_app.py
-├── styles.py
-🔁 Full Processing Flow
-1️⃣ User Input (Text or Voice)
+├── routes/
+│   └── routes_report.py
+│
+├── services/
+│   ├── emotion_service.py
+│   ├── crisis_service.py
+│   ├── behavioral_service.py
+│   ├── screening_service.py
+│   ├── history_service.py
+│   ├── matrix_service.py
+│   ├── rag_service.py
+│   ├── safety_service.py
+│   ├── report_service.py
+│   └── voice_service.py
+│
+├── models/
+│   └── user_models.py
+│
+├── dependencies.py
+├── config.py
+└── main.py
+System Workflow
 
-User can:
+The assistant processes messages through a multi-stage analysis pipeline.
 
-Type message
+User Message
+      │
+      ▼
+Emotion Detection
+      │
+      ▼
+Crisis Detection
+      │
+      ▼
+Behavioral Pattern Analysis
+      │
+      ▼
+Screening Score (PHQ-2 / GAD-2)
+      │
+      ▼
+Historical Trend Analysis
+      │
+      ▼
+Mental Health Matrix
+      │
+      ▼
+Mental Health Index (MHI)
+      │
+      ▼
+Response Generation (RAG)
+      │
+      ▼
+Safety Validation
+      │
+      ▼
+Assistant Response
+AI Service Components
+Emotion Service
 
-Click mic and speak
+Predicts emotional signals from user text.
 
-Use voice-to-voice mode
+Possible emotions:
 
-Voice is:
+sadness
 
-Transcribed using Speech Recognition
+anxiety
 
-Sent to backend
+anger
 
-Displayed in chat UI
+joy
 
-2️⃣ Backend Processing Pipeline
+neutral
 
-When /chat is called:
+Uses a fine-tuned DistilBERT classifier.
 
-Step A — Emotion Detection
+Crisis Service
 
-Predicts emotional distribution (e.g., sadness, anger, anxiety).
+Detects potential self-harm or suicide risk using a binary classifier.
 
-Step B — Crisis Detection
+Outputs:
 
-Computes crisis probability score.
+crisis_score ∈ [0,1]
 
-Step C — Intent Detection
+If the score crosses a threshold, the system triggers safety protocols.
 
-Understands whether user seeks:
+Behavioral Service
 
-Support
+Detects behavioral warning signs using pattern recognition.
 
-Venting
+Signals include:
 
-Advice
+social withdrawal
 
-Crisis help
+lack of motivation
 
-Step D — Mental Health Index (MHI)
+substance coping
 
-MHI is computed using:
+hopelessness language
 
-emotion_score + crisis_score → scaled to 0–100
+sleep disruption
 
-Categories:
+The service outputs a behavioral risk score.
 
-Normal
+Screening Service
 
-Mild Stress
+Implements psychological screening metrics:
 
-Anxiety
+PHQ-2 (depression screening)
+GAD-2 (anxiety screening)
 
-Depression
+Scores are normalized to generate a screening risk score.
 
-Crisis
+History Service
 
-3️⃣ RAG (Retrieval-Augmented Generation)
+Analyzes previous conversations to detect mental health trends.
 
-Instead of generating generic responses:
+Uses exponential decay weighting so recent sessions influence risk more strongly.
 
-SentenceTransformer embeds user message
+This helps detect:
 
-FAISS retrieves top CBT knowledge chunks
+improving trends
 
-Prompt is constructed using:
+declining trends
 
-Retrieved CBT context
+stable states
 
-Emotional state
+Mental Health Matrix
+
+Combines all signals to compute the Mental Health Index (MHI).
+
+Inputs include:
+
+emotion_score
+crisis_score
+behavioral_score
+screening_score
+history_score
+
+Weighted scoring produces a final 0–100 index.
+
+RAG Service
+
+Generates conversational responses using a language model.
+
+Inputs include:
+
+user message
+
+emotional context
+
+intent
 
 MHI score
 
-Crisis probability
+crisis probability
 
-LLM then generates grounded response.
+The model generates supportive conversational responses.
 
-This ensures:
+Safety Service
 
-No hallucinated therapy
+Validates LLM responses to ensure safe outputs.
 
-CBT-aligned coping strategies
+Responsibilities:
 
-Context-based emotional support
+crisis override
 
-4️⃣ Conversational CBT Integration
+response validation
 
-The assistant:
+helpline insertion
 
-Acknowledges emotional experience
+emergency escalation
 
-Explores thoughts and patterns gently
+If high risk is detected, the system bypasses the LLM response entirely.
 
-Applies CBT principles naturally
+Voice Interaction
 
-Avoids worksheet-style responses
+The assistant supports speech interaction.
 
-Avoids over-clinical language
+Speech flow:
 
-Maintains warm supportive tone
+User Speech
+   │
+   ▼
+Whisper STT
+   │
+   ▼
+Text Processing Pipeline
+   │
+   ▼
+AI Response
+   │
+   ▼
+Text-to-Speech Output
+API Endpoints
+Authentication
+POST /auth/register
+POST /auth/login
+Chat
+POST /chat
 
-5️⃣ Safety Layer
+Processes user messages through the full analysis pipeline.
 
-Before sending response:
+Mental Health Screening
+POST /assessment
 
-SafetyService checks:
+Stores PHQ-2 and GAD-2 scores for the user.
 
-High crisis probability
+Conversation History
+GET /user/history
 
-Self-harm indicators
+Returns previous messages.
 
-Unsafe suggestions
+MHI Timeline
+GET /user/timeline
 
-If high risk:
+Used for dashboard visualization.
 
-Crisis stabilization message returned
+Voice Processing
+POST /voice/transcribe
+POST /voice/speak
 
-Emergency recommendation shown
+Handles speech input and output.
 
-6️⃣ Database Logging
+Report Generation
+GET /report/{user_id}
 
-Each interaction stores:
+Generates a PDF summary of the user’s mental health session.
 
+Database Structure
+Users Collection
+{
+  _id,
+  email,
+  hashed_password,
+  baseline_mhi,
+  phq2_total,
+  gad2_total,
+  created_at,
+  last_login
+}
+Conversations Collection
 {
   user_id,
   timestamp,
   message,
   emotion_scores,
   crisis_score,
+  behavioral_score,
+  screening_score,
+  history_score,
   intent,
   mhi,
   category
 }
+Safety Considerations
 
-Used for:
+The assistant does not replace professional care.
 
-Trend analytics
+Safety mechanisms include:
 
-Report generation
+suicide risk detection
 
-Session tracking
+crisis escalation
 
-7️⃣ Dashboard Analytics
+helpline recommendations
 
-Displays:
+emergency messaging
 
-Latest MHI (Gauge)
+When severe distress is detected, the assistant encourages contacting real-world support.
 
-Session average MHI
+Future Improvements
 
-Number of check-ins
+Potential enhancements:
 
-Category history
+therapist-guided dialogue framework
 
-MHI trend line chart
+advanced cognitive distortion detection
 
-This helps identify behavioral patterns over time.
+long-term mental health trajectory modeling
 
-8️⃣ AI-Generated PDF Report
+adaptive intervention strategies
 
-User can download a full session report.
+multilingual support
 
-Backend:
+improved crisis sensitivity models
 
-Retrieves conversation history
+Disclaimer
 
-Computes average MHI
+This project is designed as a supportive well-being assistant, not a substitute for professional mental health care.
 
-Generates session summary via LLM
-
-Builds structured PDF (ReportLab)
-
-PDF includes:
-
-User ID
-
-Date
-
-Average MHI
-
-AI session summary
-
-Emotional insights
+If a user is in immediate danger, they should contact emergency services or a mental health professional.
