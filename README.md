@@ -1,129 +1,180 @@
-Smart Mental Well-Being Assistant
+🧠 Smart Mental Well-Being Assistant
 
-An AI-powered mental health support assistant that analyzes emotional signals from user conversations and provides supportive responses while monitoring a Mental Health Index (MHI) to track well-being trends.
+An AI-powered mental health support assistant designed to understand emotional signals from user conversations and provide supportive responses while tracking a Mental Health Index (MHI) to monitor well-being trends.
 
-The system combines machine learning models, rule-based behavioral analysis, conversational AI, and safety escalation logic to provide supportive interaction while identifying high-risk situations.
+The system integrates machine learning models, behavioral analysis, conversational AI, and safety mechanisms to deliver empathetic support while detecting potential high-risk situations.
 
-Overview
+🌟 Key Capabilities
 
-The Smart Mental Well-Being Assistant is designed to act as a supportive conversational companion.
+The assistant is designed to act as a supportive conversational companion that can:
 
-The system:
+🧠 Detect emotional signals from text
+⚠️ Identify potential crisis or self-harm risk
+📊 Track mental health trends over time
+💬 Generate supportive conversational responses
+🚑 Escalate to crisis resources when necessary
 
-Detects emotional signals
+Unlike traditional chatbots, this system evaluates multiple psychological indicators simultaneously to produce a more realistic well-being assessment.
 
-Identifies crisis risk
+📊 Mental Health Index (MHI)
 
-Tracks mental health trends
+The Mental Health Index (MHI) is a score between 0 and 100 representing a user's overall mental well-being based on conversation analysis.
 
-Generates supportive responses
+Score Range	Category
+80 – 100	🟢 Stable
+65 – 79	🟡 Mild Stress
+45 – 64	🟠 Moderate Distress
+25 – 44	🔴 High Risk
+0 – 24	🚨 Crisis Risk
 
-Escalates to crisis support when necessary
+The MHI is updated after each conversation message using multiple signals.
 
-Unlike simple chatbots, the assistant uses a multi-signal mental health scoring system that evaluates emotional, behavioral, screening, and historical indicators.
+🧩 AI Signal Analysis
 
-Core Features
-AI Mental Health Analysis
+To evaluate mental health signals, the system combines several independent analysis modules.
 
-Analyzes user messages using multiple signals:
+🧠 Emotion Detection
 
-Emotion detection
+Identifies emotional tone in user messages.
 
-Crisis detection
+Possible emotions include:
 
-Behavioral patterns
+sadness
 
-Psychological screening scores
+anxiety
 
-Conversation history trends
+anger
 
-Mental Health Index (MHI)
+joy
 
-The system calculates a Mental Health Index (0–100) representing overall well-being.
+neutral
 
-Range	Category
-80 – 100	Stable
-65 – 79	Mild Stress
-45 – 64	Moderate Distress
-25 – 44	High Risk
-0 – 24	Crisis Risk
+This is implemented using a fine-tuned DistilBERT transformer model.
 
-The index is updated every conversation message.
+⚠️ Crisis Detection
 
-Crisis Detection & Safety Escalation
+Detects potential self-harm or suicide risk from conversation text.
 
-The system detects signals such as:
+The system outputs a probability score:
 
-self-harm intent
+crisis_score ∈ [0,1]
 
-suicide ideation
+If the score exceeds a defined threshold, safety protocols are triggered automatically.
+
+🧍 Behavioral Signal Detection
+
+A rule-based behavioral analysis detects patterns such as:
+
+social withdrawal
+
+loss of motivation
+
+substance coping
 
 hopelessness language
 
-behavioral withdrawal
+sleep disturbance
 
-When high risk is detected, the assistant:
+These signals contribute to the behavioral risk score.
 
-bypasses the LLM response
+📋 Psychological Screening
 
-returns crisis support messaging
+The system integrates validated screening tools:
 
-provides helpline resources
+• PHQ-2 – depression screening
+• GAD-2 – anxiety screening
 
-Conversational AI Support
+Scores are normalized and incorporated into the overall risk calculation.
 
-The assistant provides supportive responses that aim to:
+📈 Historical Trend Analysis
 
-validate emotions
+The assistant analyzes previous conversations to identify trends.
 
-encourage small coping strategies
+Recent sessions are weighted more strongly using exponential decay, allowing the system to detect:
 
-guide reflection
+improving mental state
 
-promote seeking professional support when necessary
+declining mental state
 
-Dashboard Monitoring
+stable trends
 
-The dashboard displays:
+🧮 Mental Health Matrix
 
-Mental Health Index gauge
+All signals are combined using a weighted scoring model.
 
-Well-being trend over time
+Inputs:
 
-Session statistics
+emotion_score
+crisis_score
+behavioral_score
+screening_score
+history_score
 
-Risk category history
+These signals are processed by the Mental Health Matrix, which produces the final Mental Health Index (MHI).
 
-Tech Stack
-Backend
+💬 Conversational AI Support
 
-FastAPI
-MongoDB (Motor Async Driver)
-JWT Authentication
+The assistant generates supportive responses using Retrieval-Augmented Generation (RAG).
 
-AI & Machine Learning
+Response generation considers:
 
-Transformers (HuggingFace)
-DistilBERT fine-tuned models
-Sentence Transformers
-FAISS vector search
-OpenAI / Gemini LLM support
+user message
 
-Frontend
+detected emotion
 
-Streamlit
+conversation intent
 
-Voice Processing
+current MHI score
 
-Faster Whisper (Speech-to-Text)
-pyttsx3 / gTTS (Text-to-Speech)
+crisis probability
 
-Data Processing
+The assistant aims to:
 
-Python
-Regex-based behavioral detection
+validate user emotions
 
-Project Architecture
+suggest coping strategies
+
+encourage reflection
+
+guide toward professional help when needed
+
+🛡️ Safety Layer
+
+Safety is a core design principle.
+
+The Safety Service ensures responses remain responsible and supportive.
+
+It performs:
+
+• crisis response override
+• response validation
+• helpline insertion
+• emergency escalation
+
+If severe distress is detected, the assistant bypasses the language model entirely and returns crisis support guidance.
+
+🎤 Voice Interaction
+
+The assistant supports speech-based interaction.
+
+Voice Processing Flow
+User Speech
+     ↓
+Speech-to-Text (Whisper)
+     ↓
+Conversation Analysis Pipeline
+     ↓
+AI Response
+     ↓
+Text-to-Speech Output
+
+Speech technologies used:
+
+🎙 Faster-Whisper – speech recognition
+🔊 pyttsx3 / gTTS – speech synthesis
+
+🏗 System Architecture
+Backend Structure
 backend/
 │
 ├── auth/
@@ -154,214 +205,94 @@ backend/
 ├── dependencies.py
 ├── config.py
 └── main.py
-System Workflow
 
-The assistant processes messages through a multi-stage analysis pipeline.
+Each component is modular to allow independent improvement of AI subsystems.
+
+🔄 System Workflow
+
+The assistant processes every message through a multi-stage analysis pipeline.
 
 User Message
-      │
-      ▼
+     │
+     ▼
 Emotion Detection
-      │
-      ▼
+     │
+     ▼
 Crisis Detection
-      │
-      ▼
+     │
+     ▼
 Behavioral Pattern Analysis
-      │
-      ▼
-Screening Score (PHQ-2 / GAD-2)
-      │
-      ▼
+     │
+     ▼
+Psychological Screening
+     │
+     ▼
 Historical Trend Analysis
-      │
-      ▼
+     │
+     ▼
 Mental Health Matrix
-      │
-      ▼
+     │
+     ▼
 Mental Health Index (MHI)
-      │
-      ▼
-Response Generation (RAG)
-      │
-      ▼
+     │
+     ▼
+AI Response Generation (RAG)
+     │
+     ▼
 Safety Validation
-      │
-      ▼
+     │
+     ▼
 Assistant Response
-AI Service Components
-Emotion Service
+⚙️ Tech Stack
+Backend
 
-Predicts emotional signals from user text.
+🚀 FastAPI
+🗄 MongoDB (Motor Async Driver)
+🔐 JWT Authentication
 
-Possible emotions:
+AI & Machine Learning
 
-sadness
+🤗 HuggingFace Transformers
+🧠 DistilBERT fine-tuned models
+🔎 Sentence Transformers
+📚 FAISS Vector Search
+🧩 OpenAI / Gemini LLM integration
 
-anxiety
+Frontend
 
-anger
+🎨 Streamlit Dashboard
 
-joy
+Voice Processing
 
-neutral
+🎙 Faster-Whisper
+🔊 pyttsx3 / gTTS
 
-Uses a fine-tuned DistilBERT classifier.
-
-Crisis Service
-
-Detects potential self-harm or suicide risk using a binary classifier.
-
-Outputs:
-
-crisis_score ∈ [0,1]
-
-If the score crosses a threshold, the system triggers safety protocols.
-
-Behavioral Service
-
-Detects behavioral warning signs using pattern recognition.
-
-Signals include:
-
-social withdrawal
-
-lack of motivation
-
-substance coping
-
-hopelessness language
-
-sleep disruption
-
-The service outputs a behavioral risk score.
-
-Screening Service
-
-Implements psychological screening metrics:
-
-PHQ-2 (depression screening)
-GAD-2 (anxiety screening)
-
-Scores are normalized to generate a screening risk score.
-
-History Service
-
-Analyzes previous conversations to detect mental health trends.
-
-Uses exponential decay weighting so recent sessions influence risk more strongly.
-
-This helps detect:
-
-improving trends
-
-declining trends
-
-stable states
-
-Mental Health Matrix
-
-Combines all signals to compute the Mental Health Index (MHI).
-
-Inputs include:
-
-emotion_score
-crisis_score
-behavioral_score
-screening_score
-history_score
-
-Weighted scoring produces a final 0–100 index.
-
-RAG Service
-
-Generates conversational responses using a language model.
-
-Inputs include:
-
-user message
-
-emotional context
-
-intent
-
-MHI score
-
-crisis probability
-
-The model generates supportive conversational responses.
-
-Safety Service
-
-Validates LLM responses to ensure safe outputs.
-
-Responsibilities:
-
-crisis override
-
-response validation
-
-helpline insertion
-
-emergency escalation
-
-If high risk is detected, the system bypasses the LLM response entirely.
-
-Voice Interaction
-
-The assistant supports speech interaction.
-
-Speech flow:
-
-User Speech
-   │
-   ▼
-Whisper STT
-   │
-   ▼
-Text Processing Pipeline
-   │
-   ▼
-AI Response
-   │
-   ▼
-Text-to-Speech Output
-API Endpoints
+🔗 API Endpoints
 Authentication
 POST /auth/register
 POST /auth/login
 Chat
 POST /chat
 
-Processes user messages through the full analysis pipeline.
+Processes messages through the full mental health analysis pipeline.
 
-Mental Health Screening
+Screening
 POST /assessment
 
-Stores PHQ-2 and GAD-2 scores for the user.
+Stores PHQ-2 and GAD-2 screening scores.
 
-Conversation History
+Conversation Data
 GET /user/history
-
-Returns previous messages.
-
-MHI Timeline
 GET /user/timeline
-
-Used for dashboard visualization.
-
-Voice Processing
+Voice Interaction
 POST /voice/transcribe
 POST /voice/speak
-
-Handles speech input and output.
-
 Report Generation
 GET /report/{user_id}
 
-Generates a PDF summary of the user’s mental health session.
+Generates a PDF summary of mental health trends.
 
-Database Structure
+🗄 Database Schema
 Users Collection
 {
   _id,
@@ -387,40 +318,18 @@ Conversations Collection
   mhi,
   category
 }
-Safety Considerations
+⚠️ Important Disclaimer
 
-The assistant does not replace professional care.
+This system is designed as a supportive mental well-being assistant, not a replacement for professional care.
 
-Safety mechanisms include:
+If a user is experiencing severe distress or crisis, they should seek help from licensed mental health professionals or emergency services.
 
-suicide risk detection
+🚀 Future Improvements
 
-crisis escalation
+Potential future enhancements include:
 
-helpline recommendations
-
-emergency messaging
-
-When severe distress is detected, the assistant encourages contacting real-world support.
-
-Future Improvements
-
-Potential enhancements:
-
-therapist-guided dialogue framework
-
-advanced cognitive distortion detection
-
-long-term mental health trajectory modeling
-
-adaptive intervention strategies
-
-multilingual support
-
-improved crisis sensitivity models
-
-Disclaimer
-
-This project is designed as a supportive well-being assistant, not a substitute for professional mental health care.
-
-If a user is in immediate danger, they should contact emergency services or a mental health professional.
+• therapist-guided conversational frameworks
+• cognitive distortion detection
+• advanced long-term mental health modeling
+• adaptive intervention strategies
+• multilingual support
