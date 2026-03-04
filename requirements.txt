@@ -15,3 +15,8 @@ openai
 python-dotenv
 pydantic_settings
 streamlit-mic-recorder
+faster-whisper 
+pyttsx3 
+gtts 
+SpeechRecognition 
+pydub
