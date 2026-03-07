@@ -1,3 +1,30 @@
+"""
+rag_service_final.py
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Therapist-flow RAG service.
+
+Changes vs rag_service.py
+──────────────────────────
+1. System prompt rewritten for a warm, trusted-friend persona.
+   The AI validates before anything else, never gives unsolicited
+   advice, and always ends with ONE natural question.
+
+2. Therapist flow embedded in the prompt:
+     Validate → Reflect → Explore → Support (only when earned)
+   The prompt explicitly tells the model to echo the user's exact
+   words back rather than using stock phrases like "That must be hard".
+
+3. Language instruction injected from multilingual_voice_service.
+   If language_code != "en", the LLM is told to respond in that
+   language. No model fine-tuning required.
+
+4. Response length calibrated per category — same as before but
+   tightened for High Risk / Depression Risk (1–2 sentences only,
+   pure warmth, no advice).
+
+5. Signature extended with language_code parameter.
+   Returns (response_text, llm_failed) tuple — unchanged.
+"""
 from __future__ import annotations
 
 import json
@@ -15,59 +42,87 @@ METADATA_PATH        = "backend/rag/metadata.json"
 SIMILARITY_THRESHOLD = 2.0
 TOP_K                = 3
 
-# ── System prompt ─────────────────────────────────────────────────────────────
+# ── System prompt — warm friend / trusted companion ───────────────────────────
+# Key design decisions:
+#   • No clinical labels, no "I understand how you feel" stock phrases
+#   • The AI echoes the user's exact words (specific > generic)
+#   • Questions feel like natural curiosity, not an intake form
+#   • CBT techniques are woven in invisibly — never named
 _SYSTEM_PROMPT = """
-You are a Cognitive Behavioral Therapy (CBT)-based mental well-being assistant.
+You are a caring, warm companion — like a close friend who genuinely listens.
+You have deep knowledge of CBT and emotional wellbeing, but you never sound clinical.
 
-Your Purpose:
-- Provide emotionally supportive, evidence-based coping guidance.
-- Base your response ONLY on the retrieved CBT context provided.
-- Adapt tone and length to the user's emotional state and risk level.
-- Maintain a calm, empathetic, non-judgmental tone at all times.
+YOUR PERSONALITY:
+- Present, curious, and genuinely interested in the person's experience
+- You remember what they said earlier in this conversation and connect to it
+- You sound like a real person texting a close friend — warm, unhurried, specific
+- You sit with the person in their feeling before moving anywhere
 
-Strict Rules:
-- Use ONLY techniques grounded in the retrieved context.
-- Do NOT invent new therapeutic methods or diagnoses.
-- Do NOT provide medication recommendations.
-- Do NOT minimize emotional distress.
-- Do NOT validate self-harm or suicidal thoughts.
-- NEVER use bullet points, headers, or lists — write in natural prose.
+YOUR APPROACH (do these naturally — never name them):
+Step 1 — Validate: Reflect the person's feeling back using THEIR exact words.
+         Not "That sounds hard" but "So the thing with [their specific situation] is really weighing on you."
+Step 2 — Explore: Ask ONE question that goes deeper into what they said.
+         Not "How does that make you feel?" but something specific to their situation.
+Step 3 — Support: Only offer a reframe or coping thought AFTER validating.
+         Never jump straight to advice. Let them feel heard first.
 
-Safety Protocol:
-- If crisis_tier is 'distress': validate first, then one brief coping suggestion.
-- Never sound robotic or scripted.
-- Do NOT overreact to mild everyday stress — read context carefully.
+TONE RULES:
+- Never say: "That must be hard", "I understand", "Of course", "Absolutely", "That's valid"
+- Instead: echo their words, use "it sounds like…", "I wonder if…", "maybe…"
+- Keep it conversational. Short sentences. No stiff phrasing.
+- One warm acknowledgment per response is fine: "I'm really glad you shared that"
 
-CRITICAL — Response Length:
-You MUST follow the sentence limit instruction given below exactly.
-Do not write more sentences than instructed.
-End with ONE gentle, open, supportive question (counts as one sentence).
+LANGUAGE RULE (MANDATORY — check below for instruction):
+If a LANGUAGE INSTRUCTION is present, respond ENTIRELY in that language.
+Every single word. Do not switch to English mid-response.
+
+RESPONSE LENGTH:
+Follow the LENGTH INSTRUCTION below exactly. Count sentences before responding.
+End with exactly ONE question. It must feel like natural curiosity, not an interview.
+
+SAFETY:
+- For crisis_tier active or passive: the safety system handles this — do not generate
+- For distress tier: validate warmly, one grounding thought, one gentle question
+- Never say "everyone goes through this" or minimize the person's pain
+- Never mention suicide, self-harm, or crisis resources unless they bring it up
 """
 
-# ── Category → prompt length instruction ─────────────────────────────────────
+# ── Category → length + tone instruction ─────────────────────────────────────
 _LENGTH_INSTRUCTIONS: dict[str, str] = {
     "Stable": (
-        "Write a warm, conversational response of EXACTLY 4 to 5 sentences. "
-        "Keep it light and supportive. End with one open question."
+        "Write 3 to 4 warm, conversational sentences. "
+        "Keep it light — you're checking in on a friend. "
+        "End with one curious, natural question about something they said."
     ),
     "Mild Stress": (
-        "Write a supportive coaching response of EXACTLY 3 to 4 sentences. "
-        "Validate first, then one brief coping suggestion. End with one question."
+        "Write 3 to 4 sentences. "
+        "Open with one sentence that reflects back what they said (use their words). "
+        "Then one brief supportive thought. "
+        "End with one open question that invites them to say more."
     ),
     "Moderate Distress": (
-        "Write an emotional validation response of EXACTLY 2 to 3 sentences. "
-        "Focus on making the user feel heard. One gentle question at the end."
+        "Write 2 to 3 sentences. "
+        "Lead with emotional validation — echo their specific words back to them. "
+        "No advice yet. "
+        "End with one gentle question: what's the heaviest part of this for them?"
     ),
     "High Risk": (
-        "Write a SHORT, compassionate response of EXACTLY 1 to 2 sentences. "
-        "Be warm and grounding. No advice — just presence. End with one question."
+        "Write 1 to 2 sentences only. "
+        "Be purely warm and present. Zero advice, zero reframes, zero techniques. "
+        "Just show you're here. End with: what would help most right now?"
     ),
     "Depression Risk": (
-        "Write a SHORT, compassionate response of EXACTLY 1 to 2 sentences. "
-        "Be gentle and affirming. End with one simple question."
+        "Write 1 to 2 sentences only. "
+        "Acknowledge how heavy and exhausting things feel. "
+        "End with one simple, caring question: are you okay right now?"
     ),
-    # Crisis Risk is handled by safety_service — RAG is never called
+    # Crisis Risk → intercepted by main.py before RAG is ever called
 }
+
+_LENGTH_DEFAULT = (
+    "Write 2 to 3 warm conversational sentences. "
+    "Validate first, then one open question."
+)
 
 
 class RAGService:
@@ -83,93 +138,95 @@ class RAGService:
     def retrieve_context(self, query: str) -> list[dict]:
         embedding          = self.embed_model.encode([query])
         distances, indices = self.index.search(np.array(embedding), TOP_K)
-
         results = [
             self.metadata[idx]
             for i, idx in enumerate(indices[0])
             if distances[0][i] <= SIMILARITY_THRESHOLD
         ]
         if not results:
-            results = [self.metadata[indices[0][0]]]   # always return at least one chunk
-
+            results = [self.metadata[indices[0][0]]]
         return results
 
     # ── Prompt builder ────────────────────────────────────────────────────────
 
     def _build_prompt(
         self,
-        user_message:  str,
-        emotion_label: str,
-        emotion_score: float,
-        intent:        str,
-        mhi:           float,
-        crisis_score:  float,
-        crisis_tier:   str,
-        category:      str,
-        chunks:        list[dict],
+        user_message:    str,
+        emotion_label:   str,
+        emotion_score:   float,
+        intent:          str,
+        mhi:             float,
+        crisis_score:    float,
+        crisis_tier:     str,
+        category:        str,
+        language_code:   str,
+        chunks:          list[dict],
     ) -> str:
-        context_text   = "\n\n".join(
-            f"Technique {i+1}:\n{c['text']}" for i, c in enumerate(chunks)
+        context_text = "\n\n".join(
+            f"Wellbeing technique {i+1}:\n{c['text']}" for i, c in enumerate(chunks)
         )
-        length_instruction = _LENGTH_INSTRUCTIONS.get(
-            category,
-            "Write a concise, supportive response of 2 to 3 sentences."
-        )
+        length_instruction = _LENGTH_INSTRUCTIONS.get(category, _LENGTH_DEFAULT)
+
+        # Language instruction from multilingual service
+        lang_instruction = ""
+        try:
+            from backend.services.multilingual_voice_service import build_language_instruction
+            lang_instruction = build_language_instruction(language_code)
+        except ImportError:
+            if language_code and language_code != "en":
+                from backend.services.multilingual_voice_service import _LANG_META
+                lang_name = _LANG_META.get(language_code, {}).get("name", language_code.upper())
+                lang_instruction = (
+                    f"\nLANGUAGE INSTRUCTION (MANDATORY):\n"
+                    f"The user spoke in {lang_name}. "
+                    f"Respond ENTIRELY in {lang_name}. No English except common loan-words.\n"
+                )
 
         return f"""{_SYSTEM_PROMPT}
+{lang_instruction}
 
-Retrieved CBT Context:
+Background wellbeing knowledge (use naturally, never cite or name):
 {context_text}
 
-User Emotional State:
-- Dominant Emotion : {emotion_label} (score: {emotion_score:.2f})
-- Intent           : {intent}
-- Mental Health Index: {mhi}
-- Crisis Probability : {crisis_score:.2f}
-- Crisis Tier      : {crisis_tier}
-- Category         : {category}
+Session context:
+  Emotion   : {emotion_label} (score {emotion_score:.2f})
+  Intent    : {intent}
+  MHI score : {mhi:.0f} / 100
+  Crisis p  : {crisis_score:.2f}
+  Tier      : {crisis_tier}
+  Category  : {category}
 
-RESPONSE LENGTH INSTRUCTION (MANDATORY):
+LENGTH INSTRUCTION (MANDATORY — count your sentences before sending):
 {length_instruction}
 
-User Message:
-{user_message}
+The user just said:
+"{user_message}"
 
-Response Guidelines:
-- Match tone to emotional state and category.
-- If crisis_tier is 'distress': open with validation, then brief grounding.
-- If crisis_tier is 'none' and category is 'Stable': warm reframing, no heavy advice.
-- Do NOT name CBT techniques explicitly — integrate naturally.
-- Write in plain prose. No bullet points. No headers.
-- STRICTLY follow the sentence count instruction above.
+Respond now. Natural prose only — no bullet points, no headers, no lists.
+Follow the sentence count. End with exactly one question.
 """
 
     # ── Main generate ─────────────────────────────────────────────────────────
 
     def generate_response(
         self,
-        user_message:   str,
-        emotion_label:  str,
-        emotion_score:  float,
-        intent:         str,
+        user_message:        str,
+        emotion_label:       str,
+        emotion_score:       float,
+        intent:              str,
         mental_health_index: float,
         crisis_probability:  float,
-        crisis_tier:    str  = "none",
-        category:       str  = "Stable",
+        crisis_tier:         str = "none",
+        category:            str = "Stable",
+        language_code:       str = "en",
     ) -> tuple[str, bool]:
         """
         Returns (response_text, llm_failed).
-
-        Crisis tiers (active / passive) should be intercepted by main.py
-        before calling this — but if they somehow reach here, we return a
-        safe stub and signal llm_failed=False so safety_service still
-        applies the correct override.
+        main.py intercepts active/passive crisis tiers before calling this.
         """
-        # Should not be called for active/passive — safety net
         if crisis_tier in ("active", "passive"):
             logger.warning(
-                "RAGService.generate_response called for crisis_tier=%s — "
-                "returning empty so safety_service applies template",
+                "RAGService called for crisis_tier=%s — returning empty (safety_service handles)",
                 crisis_tier,
             )
             return "", False
@@ -179,16 +236,16 @@ Response Guidelines:
             prompt  = self._build_prompt(
                 user_message, emotion_label, emotion_score,
                 intent, mental_health_index, crisis_probability,
-                crisis_tier, category, chunks,
+                crisis_tier, category, language_code, chunks,
             )
-            result  = generate_llm_response(prompt)
+            result = generate_llm_response(prompt)
 
             if not result or not result.strip():
-                logger.warning("RAGService | LLM returned empty response")
-                return "", True   # signal failure
+                logger.warning("RAGService | LLM returned empty")
+                return "", True
 
             return result, False
 
         except Exception as exc:
             logger.error("RAGService.generate_response error: %s", exc)
-            return "", True   # signal failure → safety_service uses fallback
+            return "", True

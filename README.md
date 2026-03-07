@@ -1,335 +1,478 @@
-🧠** Smart Mental Well-Being Assistant**
-
-An AI-powered mental health support assistant designed to understand emotional signals from user conversations and provide supportive responses while tracking a Mental Health Index (MHI) to monitor well-being trends.
-
-The system integrates machine learning models, behavioral analysis, conversational AI, and safety mechanisms to deliver empathetic support while detecting potential high-risk situations.
-
-🌟 **Key Capabilities**
-
-The assistant is designed to act as a supportive conversational companion that can:
-
-🧠 Detect emotional signals from text
-⚠️ Identify potential crisis or self-harm risk
-📊 Track mental health trends over time
-💬 Generate supportive conversational responses
-🚑 Escalate to crisis resources when necessary
-
-Unlike traditional chatbots, this system evaluates multiple psychological indicators simultaneously to produce a more realistic well-being assessment.
-
-📊 **Mental Health Index (MHI)**
-
-The Mental Health Index (MHI) is a score between 0 and 100 representing a user's overall mental well-being based on conversation analysis.
-
-Score Range	Category
-80 – 100	🟢 Stable
-65 – 79	🟡 Mild Stress
-45 – 64	🟠 Moderate Distress
-25 – 44	🔴 High Risk
-0 – 24	🚨 Crisis Risk
-
-The MHI is updated after each conversation message using multiple signals.
-
-🧩** AI Signal Analysis**
-
-To evaluate mental health signals, the system combines several independent analysis modules.
-
-🧠 Emotion Detection
-
-Identifies emotional tone in user messages.
-
-Possible emotions include:
-
-sadness
-
-anxiety
-
-anger
-
-joy
-
-neutral
-
-This is implemented using a fine-tuned DistilBERT transformer model.
-
-⚠️ Crisis Detection
-
-Detects potential self-harm or suicide risk from conversation text.
-
-The system outputs a probability score:
-
-crisis_score ∈ [0,1]
-
-If the score exceeds a defined threshold, safety protocols are triggered automatically.
-
-🧍 Behavioral Signal Detection
-
-A rule-based behavioral analysis detects patterns such as:
-
-social withdrawal
-
-loss of motivation
-
-substance coping
-
-hopelessness language
-
-sleep disturbance
-
-These signals contribute to the behavioral risk score.
-
-📋 Psychological Screening
-
-The system integrates validated screening tools:
-
-• PHQ-2 – depression screening
-• GAD-2 – anxiety screening
-
-Scores are normalized and incorporated into the overall risk calculation.
-
-📈 Historical Trend Analysis
-
-The assistant analyzes previous conversations to identify trends.
-
-Recent sessions are weighted more strongly using exponential decay, allowing the system to detect:
-
-improving mental state
-
-declining mental state
-
-stable trends
-
-🧮 Mental Health Matrix
-
-All signals are combined using a weighted scoring model.
-
-Inputs:
-
-emotion_score
-crisis_score
-behavioral_score
-screening_score
-history_score
-
-These signals are processed by the Mental Health Matrix, which produces the final Mental Health Index (MHI).
-
-💬 Conversational AI Support
-
-The assistant generates supportive responses using Retrieval-Augmented Generation (RAG).
-
-Response generation considers:
-
-user message
-
-detected emotion
-
-conversation intent
-
-current MHI score
-
-crisis probability
-
-The assistant aims to:
-
-validate user emotions
-
-suggest coping strategies
-
-encourage reflection
-
-guide toward professional help when needed
-
-🛡️ Safety Layer
-
-Safety is a core design principle.
-
-The Safety Service ensures responses remain responsible and supportive.
-
-It performs:
-
-• crisis response override
-• response validation
-• helpline insertion
-• emergency escalation
-
-If severe distress is detected, the assistant bypasses the language model entirely and returns crisis support guidance.
-
-🎤 Voice Interaction
-
-The assistant supports speech-based interaction.
-
-Voice Processing Flow
-User Speech
-     ↓
-Speech-to-Text (Whisper)
-     ↓
-Conversation Analysis Pipeline
-     ↓
-AI Response
-     ↓
-Text-to-Speech Output
-
-Speech technologies used:
-
-🎙 Faster-Whisper – speech recognition
-🔊 pyttsx3 / gTTS – speech synthesis
-
-🏗 **System Architecture**
-Backend Structure
-backend/
-│
-├── auth/
-│   ├── auth_router.py
-│   └── auth_utils.py
-│
-├── database/
-│   └── mongo_client.py
-│
-├── routes/
-│   └── routes_report.py
-│
-├── services/
-│   ├── emotion_service.py
-│   ├── crisis_service.py
-│   ├── behavioral_service.py
-│   ├── screening_service.py
-│   ├── history_service.py
-│   ├── matrix_service.py
-│   ├── rag_service.py
-│   ├── safety_service.py
-│   ├── report_service.py
-│   └── voice_service.py
-│
+# Smart Mental Well-Being Assistant
+
+A full-stack mental health support system combining clinical screening tools, real-time emotion and crisis detection, CBT-guided AI responses, multilingual voice interaction, and an MHI (Mental Health Index) tracking dashboard. Built for the Indian context with support for 14 languages.
+
+---
+
+## Overview
+
+This system processes a user's text or speech input through a multi-layer ML pipeline that detects emotion, assesses crisis risk, computes a Mental Health Index score, and generates a response calibrated to the user's current state. All heavy computation runs locally. No patient data is sent to external services except the LLM.
+
+The architecture is designed around one core principle: **safety before helpfulness**. Crisis detection runs before the LLM is ever called. For active suicidal language, the system bypasses the LLM entirely and returns a predefined, helpline-inclusive response.
+
+---
+
+## Features
+
+**Emotion and Crisis Detection**
+- Fine-tuned DistilBERT models for emotion classification and crisis tier detection
+- Rule-based regex patterns as a safety-first second layer (active, passive, distress, none)
+- Hard MHI ceilings enforced per crisis tier regardless of model output
+
+**Mental Health Index**
+- Composite score (0–100) from emotion, crisis probability, behavioral signals, PHQ-2/GAD-2 screening, and session history
+- Nonlinear crisis amplification with hopeless-language penalty
+- Hard floors: active crisis → MHI ≤ 20, passive → MHI ≤ 35
+
+**CBT-Guided Responses**
+- RAG (Retrieval-Augmented Generation) over a FAISS-indexed CBT knowledge base
+- Response length adapts to risk category: Crisis gets a 1–2 sentence template, Stable gets 4–5 sentences
+- LLM is bypassed entirely for active/passive crisis tiers
+
+**Multilingual Voice**
+- Language auto-detection via faster-whisper (supports 99 languages, runs locally)
+- Indian language TTS via gTTS with co.in accent routing
+- Emotion-matched speaking speed via pydub tempo adjustment
+- Supported Indian languages: Hindi, Bengali, Tamil, Telugu, Marathi, Gujarati, Punjabi, Kannada, Malayalam, Urdu, Odia, Assamese, Nepali, and English
+
+**Dashboard**
+- Real-time MHI trend chart with zone bands
+- Session statistics: peak/low MHI, emotion distribution, voice vs text breakdown
+- PHQ-2/GAD-2 screening integration
+
+**Authentication**
+- JWT-based login/registration
+- Per-user conversation history and timeline stored in MongoDB
+
+---
+
+## Architecture
+
+```
+User Input (text or audio)
+         │
+         ▼
+┌────────────────────────────────────────────────────────────────┐
+│  Layer 1 — ML Inference  (all run in thread pool, parallel)    │
+│  EmotionService    → emotion label + score                     │
+│  CrisisService     → crisis probability + tier                 │
+│  IntentService     → intent classification                     │
+│  BehavioralService → behavioral risk score (regex)             │
+└────────────────────────────────────────────────────────────────┘
+         │
+         ▼
+┌────────────────────────────────────────────────────────────────┐
+│  Layer 2 — MHI Computation                                     │
+│  MentalHealthMatrix.compute(emotion, crisis, behavioral,       │
+│    screening, history, raw_text) → MHI score 0–100            │
+│  MentalHealthMatrix.categorize() → category string            │
+└────────────────────────────────────────────────────────────────┘
+         │
+         ▼
+┌────────────────────────────────────────────────────────────────┐
+│  Layer 3 — Response Generation                                 │
+│  if active/passive crisis:                                     │
+│    → SafetyService returns predefined template (LLM skipped)  │
+│  else:                                                         │
+│    → RAGService.retrieve_context() → FAISS top-k chunks       │
+│    → LLM generates response with length instruction           │
+│    → SafetyService.validate_response() trims + checks         │
+└────────────────────────────────────────────────────────────────┘
+         │
+         ▼
+┌────────────────────────────────────────────────────────────────┐
+│  Layer 4 — Voice Output  (voice mode only)                     │
+│  MultilingualVoiceService.synthesize()                         │
+│    gTTS → Indian accent → pydub speed adjust → MP3            │
+└────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Project Structure
+
+```
+├── backend/
+│   ├── auth/
+│   │   └── auth_router.py          JWT authentication routes
+│   ├── config.py                   Pydantic settings (env vars)
+│   ├── dependencies.py             FastAPI dependency injection
+│   ├── rag/
+│   │   ├── faiss_index.index       FAISS vector index (CBT knowledge)
+│   │   └── metadata.json           Chunk metadata for retrieved docs
+│   ├── routes/
+│   │   └── routes_report.py        PDF report generation
+│   └── services/
+│       ├── behavioral_service.py   Regex-based behavioral risk scoring
+│       ├── crisis_service.py       DistilBERT crisis detection + regex
+│       ├── emotion_service.py      DistilBERT emotion classification
+│       ├── history_service.py      Session history risk trend
+│       ├── intent_service.py       Intent classification
+│       ├── llm_service.py          LLM wrapper (Ollama/OpenAI)
+│       ├── matrix_service.py       MHI computation and categorization
+│       ├── multilingual_voice_service.py  Multilingual STT + TTS
+│       ├── rag_service.py          FAISS retrieval + LLM prompt builder
+│       ├── safety_service.py       Crisis override + response length control
+│       └── screening_service.py    PHQ-2 / GAD-2 normalization
+├── components/
+│   ├── chat_ui.py                  Streamlit chat panel + voice mode
+│   └── dashboard.py                MHI dashboard with trend chart
 ├── models/
-│   └── user_models.py
-│
-├── dependencies.py
-├── config.py
-└── main.py
+│   ├── crisis/                     Fine-tuned DistilBERT (crisis)
+│   └── emotion/                    Fine-tuned DistilBERT (emotion)
+├── main.py                         FastAPI application entry point
+├── app.py                          Streamlit frontend entry point
+└── requirements.txt
+```
 
-Each component is modular to allow independent improvement of AI subsystems.
+---
 
-🔄** System Workflow**
+## Requirements
 
-The assistant processes every message through a multi-stage analysis pipeline.
+- Python 3.10 or higher
+- MongoDB Atlas account (free tier works) or local MongoDB
+- 4 GB RAM minimum (8 GB recommended for Whisper base model)
+- Internet access for gTTS (TTS only) — all other processing is local
 
-User Message
-     │
-     ▼
-Emotion Detection
-     │
-     ▼
-Crisis Detection
-     │
-     ▼
-Behavioral Pattern Analysis
-     │
-     ▼
-Psychological Screening
-     │
-     ▼
-Historical Trend Analysis
-     │
-     ▼
-Mental Health Matrix
-     │
-     ▼
-Mental Health Index (MHI)
-     │
-     ▼
-AI Response Generation (RAG)
-     │
-     ▼
-Safety Validation
-     │
-     ▼
-Assistant Response
-⚙️ Tech Stack
-Backend
+### Model requirements
 
-🚀 FastAPI
-🗄 MongoDB (Motor Async Driver)
-🔐 JWT Authentication
+The fine-tuned DistilBERT models must be present at:
 
-AI & Machine Learning
+```
+models/
+├── crisis/          (DistilBERT fine-tuned for crisis detection)
+└── emotion/         (DistilBERT fine-tuned for emotion classification)
+```
 
-🤗 HuggingFace Transformers
-🧠 DistilBERT fine-tuned models
-🔎 Sentence Transformers
-📚 FAISS Vector Search
-🧩 OpenAI / Gemini LLM integration
+If the folders are absent the system falls back to keyword/regex detection automatically.
 
-Frontend
+---
 
-🎨 Streamlit Dashboard
+## Installation
 
-Voice Processing
+### Step 1 — Clone the repository
 
-🎙 Faster-Whisper
-🔊 pyttsx3 / gTTS
+```bash
+git clone https://github.com/your-username/mental-wellbeing-assistant.git
+cd mental-wellbeing-assistant
+```
 
-🔗 API Endpoints
-Authentication
-POST /auth/register
-POST /auth/login
-Chat
-POST /chat
+### Step 2 — Create a virtual environment
 
-Processes messages through the full mental health analysis pipeline.
+```bash
+python -m venv venv
 
-Screening
-POST /assessment
+# Windows
+venv\Scripts\activate
 
-Stores PHQ-2 and GAD-2 screening scores.
+# macOS / Linux
+source venv/bin/activate
+```
 
-Conversation Data
-GET /user/history
-GET /user/timeline
-Voice Interaction
-POST /voice/transcribe
-POST /voice/speak
-Report Generation
-GET /report/{user_id}
+### Step 3 — Install dependencies
 
-Generates a PDF summary of mental health trends.
+```bash
+pip install -r requirements.txt
+```
 
-🗄 Database Schema
-Users Collection
+`requirements.txt` should contain:
+
+```
+fastapi
+uvicorn
+motor
+pydantic
+pydantic-settings
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
+sentence-transformers
+faiss-cpu
+torch
+transformers
+faster-whisper
+gtts
+pydub
+streamlit
+streamlit-extras
+plotly
+fpdf2
+requests
+```
+
+### Step 4 — Configure environment variables
+
+Create a `.env` file in the project root:
+
+```env
+# MongoDB
+MONGO_URI=mongodb+srv://<user>:<password>@cluster.mongodb.net/?retryWrites=true
+MONGO_DB_NAME=mental_health_db
+
+# JWT
+JWT_SECRET_KEY=your-secret-key-at-least-32-characters
+JWT_ALGORITHM=HS256
+JWT_EXPIRE_MINUTES=1440
+
+# App
+APP_NAME=Smart Mental Well-Being Assistant
+APP_VERSION=2.0.0
+DEBUG=false
+
+# MHI thresholds
+CRISIS_PROBABILITY_THRESHOLD=0.55
+SAFETY_OVERRIDE_THRESHOLD=0.85
+
+# MHI weights (must sum to a consistent ratio, not necessarily 1.0)
+WEIGHT_EMOTION=0.25
+WEIGHT_CRISIS=0.35
+WEIGHT_SCREENING=0.15
+WEIGHT_BEHAVIORAL=0.15
+WEIGHT_HISTORY=0.10
+
+# Whisper model size: tiny (39 MB) | base (74 MB) | small (244 MB)
+# tiny  = fastest, good for most Indian accents
+# base  = better accuracy for heavy regional accents
+# small = best accuracy, slower on CPU
+WHISPER_MODEL_SIZE=tiny
+```
+
+### Step 5 — Build the RAG index
+
+If you have a CBT knowledge base (text files or PDFs):
+
+```bash
+python scripts/build_index.py --input data/cbt_docs/ --output backend/rag/
+```
+
+If you do not have a knowledge base yet, the RAG service will retrieve zero chunks and the LLM will respond from its own knowledge with the safety constraints still active.
+
+### Step 6 — Set up the LLM
+
+**Option A — Ollama (free, local, recommended)**
+
+```bash
+# Install Ollama from https://ollama.ai
+ollama pull llama3
+# or for a smaller model:
+ollama pull phi3
+```
+
+In `backend/services/llm_service.py`, set the Ollama endpoint:
+
+```python
+OLLAMA_URL = "http://localhost:11434/api/generate"
+MODEL_NAME  = "llama3"
+```
+
+**Option B — OpenAI API**
+
+```env
+OPENAI_API_KEY=sk-...
+```
+
+### Step 7 — Run the backend
+
+```bash
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+The API will be available at `http://localhost:8000`.
+Interactive API documentation is at `http://localhost:8000/docs`.
+
+### Step 8 — Run the frontend
+
+```bash
+streamlit run app.py
+```
+
+The frontend will open in your browser at `http://localhost:8501`.
+
+---
+
+## Multilingual Voice Setup
+
+No additional configuration is needed. The system uses:
+
+- **faster-whisper** for speech-to-text with automatic language detection
+- **gTTS** for text-to-speech with Indian accent routing
+- **pydub** for emotion-matched audio speed adjustment
+
+On first use, faster-whisper will download the Whisper model automatically (~39 MB for `tiny`). This requires an internet connection once.
+
+### How language detection works
+
+When a user speaks, faster-whisper runs one forward pass that simultaneously:
+
+1. Detects the language from the first 30 seconds of audio
+2. Transcribes the full audio in the detected language
+
+The language code (e.g., `hi` for Hindi) is then:
+
+- Returned in the `/voice/transcribe` API response
+- Passed to the LLM as a prompt instruction: "Respond in Hindi"
+- Passed to gTTS to produce speech in the correct language with the correct accent
+
+The user does not need to select a language. The system adapts automatically each turn.
+
+### Supported Indian languages
+
+| Language   | Code | Script     |
+|------------|------|------------|
+| Hindi      | hi   | Devanagari |
+| Bengali    | bn   | Bengali    |
+| Tamil      | ta   | Tamil      |
+| Telugu     | te   | Telugu     |
+| Marathi    | mr   | Devanagari |
+| Gujarati   | gu   | Gujarati   |
+| Punjabi    | pa   | Gurmukhi   |
+| Kannada    | kn   | Kannada    |
+| Malayalam  | ml   | Malayalam  |
+| Urdu       | ur   | Arabic     |
+| Odia       | or   | Odia       |
+| Assamese   | as   | Bengali    |
+| Nepali     | ne   | Devanagari |
+| English    | en   | Latin (Indian accent) |
+
+---
+
+## API Reference
+
+### POST /chat
+
+Processes a text message through the full ML pipeline.
+
+**Request**
+```json
+{ "message": "I have been feeling very low lately" }
+```
+
+**Response**
+```json
 {
-  _id,
-  email,
-  hashed_password,
-  baseline_mhi,
-  phq2_total,
-  gad2_total,
-  created_at,
-  last_login
+    "response":       "It sounds like things have been really difficult...",
+    "emotion_scores": {"sadness": 0.72, "anxiety": 0.18, "neutral": 0.06, ...},
+    "crisis_score":   0.12,
+    "crisis_tier":    "distress",
+    "intent":         "emotional_support",
+    "mhi":            54,
+    "category":       "Moderate Distress"
 }
-Conversations Collection
+```
+
+### POST /voice/transcribe
+
+Transcribes audio and detects the spoken language.
+
+**Request**: multipart/form-data with `audio` field (WebM/OGG/WAV/MP4)
+
+**Response**
+```json
 {
-  user_id,
-  timestamp,
-  message,
-  emotion_scores,
-  crisis_score,
-  behavioral_score,
-  screening_score,
-  history_score,
-  intent,
-  mhi,
-  category
+    "transcript":    "मुझे बहुत बुरा लग रहा है",
+    "language_code": "hi",
+    "language_name": "Hindi",
+    "confidence":    0.97
 }
-⚠️ Important Disclaimer
+```
 
-This system is designed as a supportive mental well-being assistant, not a replacement for professional care.
+`transcript` is empty string for silence — HTTP 200 is returned regardless.
 
-If a user is experiencing severe distress or crisis, they should seek help from licensed mental health professionals or emergency services.
+### POST /voice/speak
 
-🚀 Future Improvements
+Synthesizes speech in the specified language with Indian accent.
 
-Potential future enhancements include:
+**Request**
+```json
+{
+    "text":          "यह सुनकर दुख हुआ",
+    "language_code": "hi",
+    "emotion_label": "sadness",
+    "crisis_tier":   "none"
+}
+```
 
-• therapist-guided conversational frameworks
-• cognitive distortion detection
-• advanced long-term mental health modeling
-• adaptive intervention strategies
-• multilingual support
+**Response**: audio/mpeg (gTTS) or audio/wav (pyttsx3 fallback)
+
+### POST /assessment
+
+Submits PHQ-2 and GAD-2 scores.
+
+**Request**
+```json
+{ "phq2": 3, "gad2": 4 }
+```
+
+### GET /user/timeline
+
+Returns MHI scores over time for the dashboard chart.
+
+**Response**
+```json
+[
+    {"timestamp": "2025-01-15T10:23:00", "mhi": 72, "category": "Mild Stress", "crisis_tier": "none"},
+    ...
+]
+```
+
+---
+
+## Crisis Safety System
+
+The safety system operates in layers:
+
+**Layer 1 — Crisis detection** runs before any LLM call. The CrisisService combines a fine-tuned DistilBERT model with regex pattern matching. The higher severity result always wins.
+
+**Layer 2 — Early exit** in the `/chat` route. If `crisis_tier` is `active` or `passive`, the LLM is never called. A predefined, clinically reviewed response template is returned immediately with helpline numbers.
+
+**Layer 3 — Response validation** runs on all non-crisis LLM output. It checks for blocked content patterns, trims to the appropriate length for the risk category, and appends professional referral language for distress-tier responses.
+
+**Layer 4 — MHI hard ceilings** ensure that crisis language can never produce a high MHI score regardless of other factors.
+
+**Helplines included in crisis responses:**
+- AASRA: +91-9820466626
+- iCall: +91-9152987821
+- Kiran Mental Health (free, 24/7): 1800-599-0019
+- Vandrevala Foundation: +91-1860-2662-345
+
+---
+
+## Configuration Reference
+
+All thresholds are configurable via environment variables. Key settings:
+
+| Variable | Default | Description |
+|---|---|---|
+| `CRISIS_PROBABILITY_THRESHOLD` | 0.55 | Score above which passive crisis template is used |
+| `SAFETY_OVERRIDE_THRESHOLD` | 0.85 | Score above which active crisis template is used |
+| `WHISPER_MODEL_SIZE` | tiny | Whisper model: tiny / base / small |
+| `WEIGHT_CRISIS` | 0.35 | Crisis score weight in MHI computation |
+| `WEIGHT_EMOTION` | 0.25 | Emotion score weight in MHI computation |
+
+---
+
+## Limitations
+
+- The system is not a replacement for professional mental health care.
+- The LLM may occasionally produce responses that do not perfectly follow the language instruction for less common languages. Crisis responses are hardcoded in English and the detected language simultaneously for safety.
+- Whisper `tiny` model may have reduced accuracy for heavy regional accents. Use `base` or `small` via the `WHISPER_MODEL_SIZE` environment variable for better results.
+- gTTS requires an internet connection for TTS. The pyttsx3 fallback works offline but has limited Indian language support depending on installed OS voices.
+- The fine-tuned models in `models/crisis/` and `models/emotion/` are not included in this repository due to size. Instructions for training or obtaining them are in `docs/model_training.md`.
+
+---
+
+## Contributing
+
+Pull requests are welcome. For significant changes, open an issue first to discuss the proposed change. When contributing to the crisis detection or safety systems, include test cases with example phrases and expected outputs.
+
+---
+
+## License
+
+This project is released under the MIT License. See `LICENSE` for details.
+
+---
+
+## Disclaimer
+
+This software is provided for educational and research purposes. It is not a licensed medical device and should not be used as a substitute for professional mental health diagnosis or treatment. If you or someone you know is in crisis, please contact a qualified mental health professional or call a crisis helpline immediately.

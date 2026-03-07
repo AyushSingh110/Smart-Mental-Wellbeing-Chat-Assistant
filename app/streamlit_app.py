@@ -2,14 +2,14 @@ import streamlit as st
 
 from components.login import render_login
 from components.sidebar import render_sidebar
-from components.chat_ui import render_chat
-from components.tools_panel import render_tools
-from components.dashboard import render_dashboard
+from components.chat_ui  import render_chat        # voice-only, interrupt, multilingual
+from components.tools_panel     import render_tools
+from components.dashboard import render_dashboard   # equal cards, live MHI
 from styles import GLOBAL_CSS
 
 st.set_page_config(
     page_title="Well-Being AI",
-    page_icon="🫧",
+    page_icon="\U0001FAE7",   # 🫧
     layout="wide",
     initial_sidebar_state="expanded",
 )

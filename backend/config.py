@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
 
     
-    # Google OAuth (🔥 NEW)
+    # Google OAuth 
     
     GOOGLE_CLIENT_ID: str = Field(default="")
     GOOGLE_CLIENT_SECRET: str = Field(default="")
@@ -84,7 +84,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
-        extra = "ignore"  # 🔥 prevents crash if extra env vars exist
+        extra = "ignore" 
 
 
 settings = Settings()

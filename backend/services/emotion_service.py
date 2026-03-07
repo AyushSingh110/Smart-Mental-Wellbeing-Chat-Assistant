@@ -8,15 +8,14 @@ from transformers import DistilBertTokenizerFast, DistilBertForSequenceClassific
 
 logger = logging.getLogger(__name__)
 
-# models/emotion/  sits at project root (two levels above backend/services/)
 _LOCAL_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "models", "emotion")
 )
 
-# ── Canonical labels used everywhere in the pipeline ─────────────────────────
+# ── Canonical labels used everywhere in the pipeline
 CANONICAL_LABELS = ["stress", "anxiety", "sadness", "anger", "fear", "neutral"]
 
-# ── Any label the fine-tuned model might output  →  canonical label ───────────
+# Any label the fine-tuned model might output  = canonical label 
 _LABEL_MAP: dict[str, str] = {
     "stress":     "stress",
     "anxiety":    "anxiety",  "anxious":   "anxiety",
@@ -51,8 +50,7 @@ class EmotionService:
         self._loaded   = False
         self._load()
 
-    # ── Loading ───────────────────────────────────────────────────────────────
-
+    # Loading
     def _load(self) -> None:
         path = os.getenv("EMOTION_MODEL_PATH", "").strip() or _LOCAL_PATH
         try:
@@ -71,7 +69,7 @@ class EmotionService:
             )
             self._loaded = False
 
-    # ── Public API ────────────────────────────────────────────────────────────
+    # Public API
 
     def predict(self, text: str) -> dict[str, float]:
         """
@@ -85,8 +83,7 @@ class EmotionService:
                 logger.error("EmotionService.predict runtime error: %s", exc)
         return self._keyword_fallback(text)
 
-    # ── Internals ─────────────────────────────────────────────────────────────
-
+    #  Internals
     def _model_predict(self, text: str) -> dict[str, float]:
         inputs = self.tokenizer(
             text,

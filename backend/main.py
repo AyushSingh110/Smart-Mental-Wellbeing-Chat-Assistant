@@ -1,15 +1,3 @@
-"""
-main.py — Smart Mental Well-Being Assistant · FastAPI Backend
-
-Changes in this version:
-  - Crisis early-exit: active/passive tiers skip RAG entirely
-  - raw_text passed to matrix_service for hopeless-language penalty
-  - category computed BEFORE RAG so length instruction is correct
-  - rag_service.generate_response() now returns (response, llm_failed) tuple
-  - safety_service.validate_response() takes category + llm_failed params
-  - Safe fallback guaranteed — user never sees a technical error message
-  - _persist() helper to avoid code duplication across early-exit paths
-"""
 from __future__ import annotations
 
 import asyncio
@@ -30,16 +18,16 @@ from backend.config import settings
 from backend.dependencies import get_current_user
 from backend.routes.routes_report import router as report_router
 
-from backend.services.emotion_service    import EmotionService
-from backend.services.crisis_service     import CrisisService
-from backend.services.intent_service     import IntentService
-from backend.services.matrix_service     import MentalHealthMatrix
-from backend.services.rag_service        import RAGService
-from backend.services.safety_service     import SafetyService
+from backend.services.emotion_service import EmotionService
+from backend.services.crisis_service import CrisisService
+from backend.services.intent_service import IntentService
+from backend.services.matrix_service import MentalHealthMatrix
+from backend.services.rag_service import RAGService
+from backend.services.safety_service import SafetyService
 from backend.services.behavioral_service import BehavioralService
-from backend.services.screening_service  import ScreeningService
-from backend.services.history_service    import HistoryService
-from backend.services.voice_service      import VoiceService
+from backend.services.screening_service import ScreeningService
+from backend.services.history_service import HistoryService
+from backend.services.multilingual_voice_service import MultilingualVoiceService
 
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -63,7 +51,7 @@ conversations_col = db["conversations"]
 users_col         = db["users"]
 
 
-# ── Services ──────────────────────────────────────────────────────────────────
+# ── Services  (instantiated once at startup, reused for every request) ────────
 
 emotion_service    = EmotionService()
 crisis_service     = CrisisService()
@@ -74,20 +62,21 @@ safety_service     = SafetyService()
 behavioral_service = BehavioralService()
 screening_service  = ScreeningService()
 history_service    = HistoryService(conversations_col)
-voice_service      = VoiceService()
+voice_service      = MultilingualVoiceService()
 
 
 # ── Pydantic schemas ──────────────────────────────────────────────────────────
 
 class ChatRequest(BaseModel):
     message: str
+    language_code: str = "en"    # ISO 639-1 — detected by Whisper, forwarded from frontend
 
 
 class ChatResponse(BaseModel):
     response: str
     emotion_scores: dict
     crisis_score: float
-    crisis_tier: str       # 'active' | 'passive' | 'distress' | 'none'
+    crisis_tier: str          # 'active' | 'passive' | 'distress' | 'none'
     intent: str
     mhi: int
     category: str
@@ -102,6 +91,7 @@ class SpeakRequest(BaseModel):
     text: str
     emotion_label: str = "default"
     crisis_tier: str   = "none"
+    language_code: str = "en"    # ISO 639-1 — used by MultilingualVoiceService
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
@@ -144,7 +134,10 @@ app.add_middleware(
 # ── Thread-pool helper ────────────────────────────────────────────────────────
 
 async def _run_in_thread(fn, *args, **kwargs):
-    """Offloads CPU/IO-bound synchronous work to the thread pool."""
+    """
+    Offloads a synchronous blocking call (ML inference, STT, TTS) to
+    FastAPI's default thread pool so the async event loop is never blocked.
+    """
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, partial(fn, *args, **kwargs))
 
@@ -164,7 +157,7 @@ async def _persist(
     mhi: float,
     category: str,
 ) -> None:
-    """Saves one conversation turn to MongoDB."""
+    """Saves one conversation turn to MongoDB. Used by all /chat exit paths."""
     await conversations_col.insert_one({
         "user_id":          user_id,
         "timestamp":        datetime.utcnow(),
@@ -181,7 +174,9 @@ async def _persist(
     })
 
 
-# ── Routes ────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Routes
+# ─────────────────────────────────────────────────────────────────────────────
 
 @app.get("/", summary="API info")
 def root():
@@ -213,11 +208,15 @@ async def chat(
     emotion_label    = max(emotion_scores, key=emotion_scores.get)
     emotion_score    = emotion_scores[emotion_label]
 
+    # crisis_score  = float probability  (0.0 – 1.0)
+    # crisis_tier   = semantic label     ('active' | 'passive' | 'distress' | 'none')
+    # classify_tier now also uses the fine-tuned model (not just regex),
+    # so it is awaited in the thread pool like predict().
     crisis_score     = await _run_in_thread(crisis_service.predict,       body.message)
     crisis_tier      = await _run_in_thread(crisis_service.classify_tier, body.message)
 
     intent           = await _run_in_thread(intent_service.predict, body.message)
-    behavioral_score = behavioral_service.predict(body.message)   # regex — fast
+    behavioral_score = behavioral_service.predict(body.message)     # pure regex — fast
 
     logger.debug(
         "msg=%r | emotion=%s(%.2f) | crisis=%.3f | tier=%s | behavioral=%.2f",
@@ -225,7 +224,7 @@ async def chat(
         crisis_score, crisis_tier, behavioral_score,
     )
 
-    # ── Step 2: DB-dependent scoring ──────────────────────────────────────────
+    # ── Step 2: Async DB-dependent scoring ───────────────────────────────────
     history_score = await history_service.compute(user_id)
 
     user_doc = await users_col.find_one(
@@ -236,7 +235,10 @@ async def chat(
     gad2 = int(user_doc.get("gad2_total", 0)) if user_doc else 0
     screening_score = screening_service.compute(phq2, gad2)
 
-    # ── Step 3: MHI — raw_text enables hopeless-language penalty ─────────────
+    # ── Step 3: MHI ──────────────────────────────────────────────────────────
+    # raw_text is now passed so matrix_service can apply the
+    # hopeless-language penalty (e.g. "disappeared", "nobody cares").
+    # Hard ceilings:  active → 20,  passive → 35,  distress → 58
     mhi = matrix_service.compute(
         emotion_score    = emotion_score,
         crisis_score     = crisis_score,
@@ -245,18 +247,18 @@ async def chat(
         behavioral_score = behavioral_score,
         history_score    = history_score,
         crisis_tier      = crisis_tier,
-        raw_text         = body.message,   # ← new: hopeless-phrase penalty
+        raw_text         = body.message,   # ← NEW: hopeless-phrase penalty
     )
     category = matrix_service.categorize(mhi, crisis_score, crisis_tier)
 
-    logger.debug("mhi=%d | category=%s | screening=%.2f | history=%.2f",
-                 mhi, category, screening_score, history_score)
+    logger.debug(
+        "mhi=%d | category=%s | screening=%.2f | history=%.2f",
+        mhi, category, screening_score, history_score,
+    )
 
     # ── Step 4: Crisis early-exit — skip RAG for active / passive ─────────────
-    # safety_service returns a predefined template; LLM is never called.
-    # This fixes the issue where the LLM was generating a response even for
-    # active suicidal language, and safety_service had to override it anyway.
-
+    # The LLM is never called for high-risk tiers.
+    # safety_service returns a predefined, helpline-inclusive template.
     if safety_service.is_active_crisis(
         crisis_tier, crisis_score, settings.SAFETY_OVERRIDE_THRESHOLD
     ):
@@ -276,13 +278,9 @@ async def chat(
             behavioral_score, screening_score, history_score, intent, mhi, category,
         )
         return ChatResponse(
-            response       = final_response,
-            emotion_scores = emotion_scores,
-            crisis_score   = round(crisis_score, 4),
-            crisis_tier    = crisis_tier,
-            intent         = intent,
-            mhi            = int(mhi),
-            category       = category,
+            response=final_response, emotion_scores=emotion_scores,
+            crisis_score=round(crisis_score, 4), crisis_tier=crisis_tier,
+            intent=intent, mhi=int(mhi), category=category,
         )
 
     if safety_service.is_passive_crisis(
@@ -304,18 +302,17 @@ async def chat(
             behavioral_score, screening_score, history_score, intent, mhi, category,
         )
         return ChatResponse(
-            response       = final_response,
-            emotion_scores = emotion_scores,
-            crisis_score   = round(crisis_score, 4),
-            crisis_tier    = crisis_tier,
-            intent         = intent,
-            mhi            = int(mhi),
-            category       = category,
+            response=final_response, emotion_scores=emotion_scores,
+            crisis_score=round(crisis_score, 4), crisis_tier=crisis_tier,
+            intent=intent, mhi=int(mhi), category=category,
         )
 
     # ── Step 5: RAG response ──────────────────────────────────────────────────
-    # category is already known → RAG builds a length-aware prompt.
-    # generate_response() returns (text, llm_failed_bool).
+    # category is already known here so the prompt gets the correct
+    # sentence-length instruction for this risk level.
+    # language_code carries the Whisper-detected language so the LLM
+    # replies in Hindi / Bengali / Tamil etc. when the user spoke that language.
+    # generate_response() now returns (text, llm_failed_bool).
     llm_response, llm_failed = await _run_in_thread(
         rag_service.generate_response,
         body.message,
@@ -325,16 +322,19 @@ async def chat(
         mhi,
         crisis_score,
         crisis_tier,
-        category,       # ← new: correct length instruction in prompt
+        category,           # ← length-aware prompt
+        body.language_code, # ← NEW: respond in user's language
     )
 
     # ── Step 6: Safety validation + length trim ───────────────────────────────
+    # category drives the sentence-limit trim.
+    # llm_failed=True triggers a warm safe fallback instead of an error.
     final_response = safety_service.validate_response(
         response     = llm_response,
         crisis_score = crisis_score,
         crisis_tier  = crisis_tier,
-        category     = category,     # ← new: drives sentence-limit trim
-        llm_failed   = llm_failed,   # ← new: triggers warm fallback if True
+        category     = category,     # ← NEW: sentence-limit trim
+        llm_failed   = llm_failed,   # ← NEW: safe fallback on LLM failure
     )
 
     # ── Step 7: Persist to MongoDB ────────────────────────────────────────────
@@ -344,80 +344,91 @@ async def chat(
     )
 
     return ChatResponse(
-        response       = final_response,
-        emotion_scores = emotion_scores,
-        crisis_score   = round(crisis_score, 4),
-        crisis_tier    = crisis_tier,
-        intent         = intent,
-        mhi            = int(mhi),
-        category       = category,
+        response=final_response,
+        emotion_scores=emotion_scores,
+        crisis_score=round(crisis_score, 4),
+        crisis_tier=crisis_tier,
+        intent=intent,
+        mhi=int(mhi),
+        category=category,
     )
 
 
 # ── POST /voice/transcribe ────────────────────────────────────────────────────
 
-@app.post("/voice/transcribe", summary="STT — Audio → transcript")
+@app.post("/voice/transcribe", summary="Multilingual STT — audio + language detection")
 async def voice_transcribe(
     audio: UploadFile = File(...),
     user_id: ObjectId = Depends(get_current_user),
 ):
     """
-    Accepts audio recorded by the browser (WebM / OGG / WAV / MP4).
-    Returns {"transcript": "..."} with HTTP 200 in all non-error cases.
+    One Whisper pass: detects spoken language AND transcribes simultaneously.
 
-    Return values:
-        {"transcript": "hello world"}  — speech detected
-        {"transcript": ""}             — silence / too quiet (NOT an error)
+    Response (always HTTP 200 unless the upload itself is broken):
+        {
+            "transcript":    "मुझे बहुत बुरा लग रहा है",
+            "language_code": "hi",
+            "language_name": "Hindi",
+            "confidence":    0.97
+        }
 
-    HTTP errors:
-        400  — file upload contained zero bytes
-        503  — STT backend not installed
+    transcript="" means silence — still returns 200 so the JS voice loop
+    can show "No speech detected" without crashing.
     """
     audio_bytes = await audio.read()
-
     if not audio_bytes:
-        raise HTTPException(status_code=400, detail="Empty audio file — no bytes received.")
+        raise HTTPException(status_code=400, detail="Empty audio file.")
 
     content_type = (audio.content_type or "").lower()
-    if "ogg"  in content_type:               fmt = "ogg"
+    if "ogg"  in content_type:                            fmt = "ogg"
     elif "mp4" in content_type or "m4a" in content_type: fmt = "mp4"
-    elif "wav" in content_type:              fmt = "wav"
-    else:                                    fmt = "webm"
+    elif "wav" in content_type:                           fmt = "wav"
+    else:                                                 fmt = "webm"
 
-    logger.debug("STT | %d bytes | fmt=%s | mime=%s | user=%s",
-                 len(audio_bytes), fmt, content_type, user_id)
+    logger.debug("STT | %d bytes | fmt=%s | user=%s", len(audio_bytes), fmt, user_id)
 
     try:
-        transcript = await _run_in_thread(voice_service.transcribe, audio_bytes, fmt)
+        result = await _run_in_thread(voice_service.transcribe, audio_bytes, fmt)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
 
-    result = transcript or ""
-    logger.debug("STT result: %r", result[:80] if result else "(silent)")
-    return {"transcript": result}
+    logger.info(
+        "STT | lang=%s(%.0f%%) | text=%r",
+        result.language_code, result.confidence * 100, result.text[:60],
+    )
+    return {
+        "transcript":    result.text or "",
+        "language_code": result.language_code,
+        "language_name": result.language_name,
+        "confidence":    result.confidence,
+    }
 
 
 # ── POST /voice/speak ─────────────────────────────────────────────────────────
 
-@app.post("/voice/speak", summary="TTS — Text → audio bytes")
+@app.post("/voice/speak", summary="Multilingual TTS — text to speech with Indian accent")
 async def voice_speak(
     body: SpeakRequest,
     user_id: ObjectId = Depends(get_current_user),
 ):
     """
-    Returns raw audio bytes (WAV for pyttsx3, MP3 for gTTS).
-    Voice profile adapts to emotion_label and crisis_tier.
+    Produces speech in body.language_code with Indian accent.
+    Speed adapts to emotion_label and crisis_tier.
+    Returns MP3 (gTTS) or WAV (pyttsx3 fallback).
     """
     if not body.text.strip():
         raise HTTPException(status_code=400, detail="Empty text provided.")
 
-    logger.debug("TTS | emotion=%s | tier=%s | text=%r",
-                 body.emotion_label, body.crisis_tier, body.text[:60])
+    logger.debug(
+        "TTS | lang=%s | emotion=%s | tier=%s | text=%r",
+        body.language_code, body.emotion_label, body.crisis_tier, body.text[:60],
+    )
 
     try:
         audio_bytes = await _run_in_thread(
             voice_service.synthesize,
             body.text,
+            body.language_code,    # ← language code so gTTS picks right voice
             body.emotion_label,
             body.crisis_tier,
         )
@@ -425,8 +436,9 @@ async def voice_speak(
         raise HTTPException(status_code=503, detail=str(exc))
 
     media_type = (
-        "audio/wav" if voice_service._tts_backend == "pyttsx3" else "audio/mpeg"
+        "audio/wav" if voice_service.tts_backend == "pyttsx3" else "audio/mpeg"
     )
+
     return Response(
         content=audio_bytes,
         media_type=media_type,
@@ -446,20 +458,25 @@ async def submit_assessment(
 
     await users_col.update_one(
         {"_id": user_id},
-        {"$set": {
-            "phq2_total":            phq2,
-            "gad2_total":            gad2,
-            "assessment_updated_at": datetime.utcnow(),
-        }},
+        {
+            "$set": {
+                "phq2_total":            phq2,
+                "gad2_total":            gad2,
+                "assessment_updated_at": datetime.utcnow(),
+            }
+        },
         upsert=False,
     )
+
+    screening_score = screening_service.compute(phq2, gad2)
+    flags           = screening_service.get_flags(phq2, gad2)
 
     return {
         "status":          "ok",
         "phq2":            phq2,
         "gad2":            gad2,
-        "screening_score": screening_service.compute(phq2, gad2),
-        **screening_service.get_flags(phq2, gad2),
+        "screening_score": screening_score,
+        **flags,
     }
 
 

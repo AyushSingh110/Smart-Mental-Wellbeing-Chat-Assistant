@@ -8,12 +8,12 @@ from transformers import DistilBertTokenizerFast, DistilBertForSequenceClassific
 
 logger = logging.getLogger(__name__)
 
-# ── Model path ────────────────────────────────────────────────────────────────
+# Model path 
 _LOCAL_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "models", "crisis")
 )
 
-# ── Active suicidal intent patterns — hard floor 0.90 ────────────────────────
+# Active suicidal intent patterns — hard floor 0.90 
 _ACTIVE: list[tuple[re.Pattern, float]] = [
     (re.compile(r"\b(kill\s+myself|killing\s+myself)\b",                        re.I), 0.97),
     (re.compile(r"\b(end\s+my\s+life|ending\s+my\s+life)\b",                   re.I), 0.95),
@@ -26,7 +26,7 @@ _ACTIVE: list[tuple[re.Pattern, float]] = [
     (re.compile(r"\b(self[\s\-]harm|cut\s+myself|overdose\s+on)\b",            re.I), 0.91),
 ]
 
-# ── Passive death-wish patterns — hard floor 0.60 ─────────────────────────────
+# Passive death-wish patterns — hard floor 0.60 
 _PASSIVE: list[tuple[re.Pattern, float]] = [
     (re.compile(r"\b(wish\s+(i\s+was|i\s+were)\s+dead)\b",                     re.I), 0.78),
     (re.compile(r"\b(don'?t\s+want\s+to\s+(be\s+here|exist|wake\s+up))\b",     re.I), 0.74),
@@ -44,7 +44,7 @@ _PASSIVE: list[tuple[re.Pattern, float]] = [
     (re.compile(r"\b(burden\s+to\s+(everyone|others|my\s+family))\b",          re.I), 0.64),
 ]
 
-# ── Distress signals — no hard floor, model + rule max ───────────────────────
+# Distress signals — no hard floor, model + rule max 
 _DISTRESS: list[tuple[re.Pattern, float]] = [
     (re.compile(r"\b(no\s+hope|hopeless|feel\s+empty)\b",           re.I), 0.44),
     (re.compile(r"\b(so\s+much\s+pain|can'?t\s+take\s+the\s+pain)\b", re.I), 0.46),
@@ -65,7 +65,7 @@ class CrisisService:
         self._loaded   = False
         self._load()
 
-    # ── Loading ───────────────────────────────────────────────────────────────
+    # Loading
 
     def _load(self) -> None:
         path = os.getenv("CRISIS_MODEL_PATH", "").strip() or _LOCAL_PATH
@@ -85,7 +85,7 @@ class CrisisService:
             )
             self._loaded = False
 
-    # ── Public API ────────────────────────────────────────────────────────────
+    # Public API
 
     def predict(self, text: str) -> float:
         """
@@ -108,7 +108,7 @@ class CrisisService:
         _, tier = self._rule_score(text)
         return tier
 
-    # ── Internals ─────────────────────────────────────────────────────────────
+    # Internals 
 
     def _rule_score(self, text: str) -> tuple[float, str]:
         """Returns (score, tier) for the highest-severity rule match."""

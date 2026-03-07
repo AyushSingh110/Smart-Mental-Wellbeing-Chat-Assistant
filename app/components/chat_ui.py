@@ -1,48 +1,57 @@
 """
-chat_ui.py
+chat_ui.py  —  Voice-Only Mental Well-Being Companion
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Dashboard sync — definitive fix:
-  The voice panel iframe and the listener iframe are BOTH served by
-  Streamlit's component server which is cross-origin relative to the
-  main page.  window.parent.document access is blocked by the browser.
+Changes vs chat_ui_v4.py
+─────────────────────────
+1. TEXT MODE REMOVED ENTIRELY.
+   No tabs, no chat input box, no text mode button.
+   The entire UI is the voice panel.
 
-  Solution: Use Streamlit's st.query_params as the bridge.
-    1. Voice panel JS writes the turn data into window.location (hash)
-       of the LISTENER iframe.
-    2. The listener iframe is served at the same origin as the main page
-       (it uses window.parent.location.hash — same-origin, always works).
-    3. A st.query_params polling trick: the listener writes to
-       window.parent.location.hash which Streamlit DOES allow.
-    4. We read window.location.hash in Python via a hidden st.text_input
-       that the JS updates via the React setter — same approach as mic btn.
+2. INTERRUPT SUPPORT.
+   While the AI is speaking, a background SpeechRecognition
+   instance watches for ANY voice activity onset. The moment
+   the browser detects it (onstart fires, sub-100ms), the
+   current Audio element is paused synchronously. The user's
+   full utterance is then captured by MediaRecorder and
+   processed normally. The AI never finishes a sentence once
+   the user starts speaking.
 
-  Actually the simplest reliable approach for Streamlit:
-    - Voice panel calls window.parent.postMessage (cross-origin allowed for
-      POSTING, just not DOM access).
-    - The MAIN PAGE (not a sub-iframe) has a <script> that receives it
-      and writes the hidden input. We inject that script via st.markdown.
-    - st.markdown scripts DO execute in the main page context.
+3. LANGUAGE DETECTION + MATCHING.
+   /voice/transcribe now returns language_code, language_name,
+   confidence alongside transcript. This is stored as sessionLang.
+   /voice/speak is called with that language_code so gTTS picks
+   the correct Indian-language voice. The Web Speech API fallback
+   uses the matching BCP-47 locale. Language badge updates live.
+
+4. FRIENDLY THERAPIST PERSONA.
+   Warm, informal greeting. The AI sounds like a trusted friend
+   who happens to know CBT — not a clinical bot. See rag_service.py
+   for the matching system prompt changes.
+
+5. DASHBOARD SYNC.
+   Identical postMessage → hidden input → st.rerun() mechanism
+   from v4, carried forward unchanged.
 """
 from __future__ import annotations
 
 import json
-import re
-import streamlit as st
-import requests
-import streamlit.components.v1 as components
 from datetime import datetime
+
+import streamlit as st
+import streamlit.components.v1 as components
 
 BACKEND_URL = "http://localhost:8000"
 
-_CATEGORY_META = {
-    "Stable":            {"color": "#48bb78", "icon": "●"},
-    "Mild Stress":       {"color": "#68d391", "icon": "●"},
-    "Moderate Distress": {"color": "#ed8936", "icon": "●"},
-    "Depression Risk":   {"color": "#fc8181", "icon": "▲"},
-    "High Risk":         {"color": "#f56565", "icon": "▲"},
-    "Crisis Risk":       {"color": "#fc4e4e", "icon": "⚠"},
+# ── BCP-47 map for Web Speech API fallback ─────────────────────────────────────
+_BCP47 = {
+    "hi": "hi-IN", "bn": "bn-IN", "ta": "ta-IN", "te": "te-IN",
+    "mr": "mr-IN", "gu": "gu-IN", "pa": "pa-IN", "kn": "kn-IN",
+    "ml": "ml-IN", "ur": "ur-PK", "or": "or-IN", "as": "as-IN",
+    "ne": "ne-NP", "sa": "hi-IN", "en": "en-IN",
 }
 
+# ── Emotion → Web Speech rate/pitch/volume ─────────────────────────────────────
 _WEB_SPEECH_PROFILES = {
     "crisis":  {"rate": 0.76, "pitch": 0.93, "volume": 1.0},
     "sadness": {"rate": 0.82, "pitch": 0.97, "volume": 0.95},
@@ -54,553 +63,758 @@ _WEB_SPEECH_PROFILES = {
     "default": {"rate": 0.88, "pitch": 1.02, "volume": 1.00},
 }
 
-_PREFERRED_VOICES = json.dumps([
-    "Google UK English Female", "Samantha", "Karen",
-    "Moira", "Tessa", "Victoria", "Google US English",
-])
-
-
-# ── CSS ───────────────────────────────────────────────────────────────────────
-
+# ── CSS injected into Streamlit main page ─────────────────────────────────────
 _CSS = """
 <style>
-.empty-state{text-align:center;padding:3.2rem 1rem 1.5rem;}
-.empty-orb{
-    width:72px;height:72px;border-radius:50%;
-    background:radial-gradient(circle at 38% 35%,#63b3ed 0%,#4fd1c5 50%,#7c3aed 100%);
-    margin:0 auto 1.1rem;animation:orbIdle 4s ease-in-out infinite;
+/* Hide the hidden sync input completely */
+div[data-testid="stTextInput"]:has(input[aria-label="__vsync_v5__"]),
+div[data-testid="stTextInput"]:has(input[aria-label="__vsync_v5__"]) * {
+    position:absolute!important;width:1px!important;height:1px!important;
+    overflow:hidden!important;opacity:0!important;pointer-events:none!important;
 }
-@keyframes orbIdle{
-    0%,100%{box-shadow:0 0 0 0 rgba(99,179,237,0),0 8px 32px rgba(99,179,237,0.2);transform:scale(1);}
-    35%{box-shadow:0 0 0 9px rgba(99,179,237,0.07),0 8px 40px rgba(79,209,197,0.30);transform:scale(1.05);}
-    70%{box-shadow:0 0 0 5px rgba(79,209,197,0.05),0 8px 36px rgba(99,179,237,0.24);transform:scale(1.02);}
-}
-.empty-headline{font-size:1.08rem;font-weight:600;color:#e8edf5;letter-spacing:-0.02em;margin-bottom:.4rem;}
-.empty-sub{font-size:.80rem;color:#546070;line-height:1.75;max-width:275px;margin:0 auto 1.6rem;}
-.empty-pills{display:flex;justify-content:center;gap:9px;flex-wrap:wrap;}
-.empty-pill{font-size:.66rem;color:#3a4555;display:flex;align-items:center;gap:5px;padding:4px 10px;border:1px solid rgba(255,255,255,0.05);border-radius:20px;background:rgba(255,255,255,0.02);}
-.empty-pill-dot{width:5px;height:5px;border-radius:50%;}
-.typing-wrap{display:inline-flex;align-items:center;gap:5px;padding:11px 15px;background:rgba(26,32,53,0.85);border:1px solid rgba(255,255,255,0.06);border-radius:14px;border-bottom-left-radius:4px;}
-.typing-dot{width:7px;height:7px;border-radius:50%;background:#546070;animation:typingBounce 1.3s ease-in-out infinite;}
-.typing-dot:nth-child(1){animation-delay:0s;}.typing-dot:nth-child(2){animation-delay:.18s;}.typing-dot:nth-child(3){animation-delay:.36s;}
-@keyframes typingBounce{0%,60%,100%{transform:translateY(0);opacity:.35;}30%{transform:translateY(-6px);opacity:1;}}
-.msg-meta{display:flex;align-items:center;gap:5px;margin-top:7px;flex-wrap:wrap;}
-.meta-chip{font-size:.60rem;font-weight:500;letter-spacing:.05em;padding:2px 8px;border-radius:20px;text-transform:capitalize;}
-.chip-emotion{background:rgba(99,179,237,.10);color:#63b3ed;border:1px solid rgba(99,179,237,.18);}
-.chip-mhi{background:rgba(79,209,197,.09);color:#4fd1c5;border:1px solid rgba(79,209,197,.16);}
-.chip-category{border:1px solid;}
-.speaking-row{display:inline-flex;align-items:center;gap:7px;padding:5px 11px;background:rgba(79,209,197,.08);border:1px solid rgba(79,209,197,.20);border-radius:20px;font-size:.70rem;color:#4fd1c5;margin-top:8px;animation:fadeUp .3s ease;}
-.spk-bars{display:flex;align-items:flex-end;gap:2px;height:13px;}
-.spk-bar{width:2px;background:#4fd1c5;border-radius:1px;height:3px;animation:spkPulse .65s ease-in-out infinite;}
-.spk-bar:nth-child(1){animation-delay:.00s}.spk-bar:nth-child(2){animation-delay:.11s}.spk-bar:nth-child(3){animation-delay:.22s}.spk-bar:nth-child(4){animation-delay:.11s}.spk-bar:nth-child(5){animation-delay:.00s}
-@keyframes spkPulse{0%,100%{height:3px;}50%{height:12px;}}
-.crisis-passive,.crisis-active{display:flex;align-items:flex-start;gap:10px;border-radius:12px;padding:11px 14px;font-size:.75rem;line-height:1.6;margin-top:10px;animation:fadeUp .35s ease;}
-.crisis-passive{background:rgba(237,137,54,.09);border:1px solid rgba(237,137,54,.25);color:#ed8936;}
-.crisis-active{background:rgba(252,78,78,.10);border:1px solid rgba(252,78,78,.30);color:#fc8181;}
-[data-testid="stChatInput"] textarea{padding-right:5.5rem!important}
-[data-testid="stBottom"]{position:relative!important}
-[data-testid="stBottom"]>div{position:relative!important}
-[data-testid="stBottom"] iframe{position:absolute!important;right:54px!important;bottom:13px!important;width:36px!important;height:36px!important;z-index:200!important;border:none!important;background:transparent!important;pointer-events:all!important}
-div[data-testid="stTextInput"]:has(input[aria-label="__vsync__"]){position:absolute!important;width:1px!important;height:1px!important;overflow:hidden!important;opacity:0!important;pointer-events:none!important;}
-@keyframes fadeUp{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:translateY(0);}}
+/* Remove default Streamlit padding so voice panel fills nicely */
+.block-container { padding-top: 1rem !important; padding-bottom: 0 !important; }
 </style>
 """
 
-# ── postMessage listener injected into MAIN page via st.markdown ──────────────
-# st.markdown scripts run in the top-level Streamlit page context, NOT inside
-# an iframe. So window here IS the main page — postMessage from the voice
-# panel iframe arrives here correctly.
-#
-# When we receive VOICE_TURN we write the JSON into the hidden st.text_input
-# using the React native setter. Streamlit registers the change and the
-# Python code reads it on the next rerun.
-
-def _inject_postmessage_listener() -> None:
-    st.markdown("""
-    <script>
-    (function(){
-        // Avoid registering multiple listeners on reruns
-        if (window.__voiceSyncRegistered) return;
-        window.__voiceSyncRegistered = true;
-
-        window.addEventListener('message', function(evt) {
-            if (!evt.data || evt.data.type !== 'VOICE_TURN') return;
-            try {
-                var payload = JSON.stringify(evt.data);
-                // Find the hidden sync input by aria-label
-                var inputs = document.querySelectorAll('input[type="text"]');
-                var syncInput = null;
-                for (var i = 0; i < inputs.length; i++) {
-                    if (inputs[i].getAttribute('aria-label') === '__vsync__') {
-                        syncInput = inputs[i];
-                        break;
-                    }
+# ── postMessage listener injected into the main Streamlit page ────────────────
+# Runs at top-level (NOT inside an iframe) so it can access parent DOM.
+_LISTENER_SCRIPT = """
+<script>
+(function(){
+    if(window.__vSyncV5) return;
+    window.__vSyncV5 = true;
+    window.addEventListener('message', function(ev){
+        if(!ev.data || ev.data.type !== 'VOICE_TURN_V5') return;
+        try {
+            var payload = JSON.stringify(ev.data);
+            var inputs  = document.querySelectorAll('input[type="text"]');
+            for(var i=0; i<inputs.length; i++){
+                if(inputs[i].getAttribute('aria-label') === '__vsync_v5__'){
+                    var setter = Object.getOwnPropertyDescriptor(
+                        window.HTMLInputElement.prototype, 'value').set;
+                    setter.call(inputs[i], payload);
+                    inputs[i].dispatchEvent(new Event('input',  {bubbles:true}));
+                    inputs[i].dispatchEvent(new Event('change', {bubbles:true}));
+                    break;
                 }
-                if (!syncInput) return;
-                var setter = Object.getOwnPropertyDescriptor(
-                    window.HTMLInputElement.prototype, 'value'
-                ).set;
-                setter.call(syncInput, payload);
-                syncInput.dispatchEvent(new Event('input',  {bubbles: true}));
-                syncInput.dispatchEvent(new Event('change', {bubbles: true}));
-            } catch(e) {
-                console.debug('vsync error:', e);
             }
-        });
-    })();
-    </script>
-    """, unsafe_allow_html=True)
+        } catch(e){ console.debug('vsync-v5 error', e); }
+    });
+})();
+</script>
+"""
 
-
-# ── Voice panel HTML ──────────────────────────────────────────────────────────
 
 def _build_voice_panel(backend_url: str, jwt: str) -> str:
+    """
+    Builds the complete self-contained voice panel HTML.
+    All JS runs inside this iframe — no external deps except Google Fonts.
+    """
     profiles_json = json.dumps(_WEB_SPEECH_PROFILES)
+    bcp47_json    = json.dumps(_BCP47)
+    cat_colors    = json.dumps({
+        "Stable":            "#48bb78",
+        "Mild Stress":       "#68d391",
+        "Moderate Distress": "#ed8936",
+        "Depression Risk":   "#fc8181",
+        "High Risk":         "#f56565",
+        "Crisis Risk":       "#fc4e4e",
+    })
+
     return f"""<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
-<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600&display=swap" rel="stylesheet">
 <style>
+/* ── Reset ── */
 *{{margin:0;padding:0;box-sizing:border-box;}}
-html,body{{font-family:'Sora',sans-serif;background:transparent;color:#e8edf5;width:100%;overflow-x:hidden;}}
-.orb-section{{display:flex;flex-direction:column;align-items:center;padding:20px 0 8px;gap:10px;}}
-.orb{{width:90px;height:90px;border-radius:50%;cursor:pointer;border:none;outline:none;position:relative;flex-shrink:0;background:radial-gradient(circle at 38% 32%,#63b3ed 0%,#4fd1c5 50%,#7c3aed 100%);animation:orbIdle 4s ease-in-out infinite;transition:transform .15s ease;}}
-.orb:hover{{transform:scale(1.06);}} .orb:active{{transform:scale(0.96);}}
-.orb.listening{{background:radial-gradient(circle at 38% 32%,#fc8181 0%,#f6ad55 50%,#fc4e4e 100%)!important;animation:orbListen .6s ease-in-out infinite!important;}}
-.orb.thinking {{background:radial-gradient(circle at 38% 32%,#b794f4 0%,#7c3aed 50%,#553c9a 100%)!important;animation:orbThink  1s ease-in-out infinite!important;}}
-.orb.speaking {{animation:orbSpeak .7s ease-in-out infinite!important;}}
-@keyframes orbIdle{{0%,100%{{box-shadow:0 0 0 0 rgba(99,179,237,0),0 12px 40px rgba(99,179,237,.20);transform:scale(1);}}40%{{box-shadow:0 0 0 9px rgba(99,179,237,.07),0 12px 48px rgba(79,209,197,.28);transform:scale(1.04);}}80%{{box-shadow:0 0 0 5px rgba(79,209,197,.04),0 12px 44px rgba(99,179,237,.22);transform:scale(1.02);}}}}
-@keyframes orbListen{{0%,100%{{box-shadow:0 0 0 0 rgba(252,129,129,.8);transform:scale(1);}}50%{{box-shadow:0 0 0 26px rgba(252,129,129,0);transform:scale(1.12);}}}}
-@keyframes orbThink {{0%,100%{{box-shadow:0 0 0 0 rgba(183,148,244,.7);transform:scale(1);}}50%{{box-shadow:0 0 0 22px rgba(183,148,244,0);transform:scale(1.07);}}}}
-@keyframes orbSpeak {{0%,100%{{box-shadow:0 0 0 0 rgba(99,179,237,.8);transform:scale(1.02);}}50%{{box-shadow:0 0 0 24px rgba(99,179,237,0);transform:scale(1.12);}}}}
-.orb-waves{{display:none;position:absolute;bottom:18px;left:50%;transform:translateX(-50%);align-items:flex-end;gap:3px;height:22px;}}
+html,body{{
+    font-family:'Sora',sans-serif;
+    background:radial-gradient(ellipse at 50% 0%, #0c1829 0%, #060c18 68%);
+    color:#e8edf5;width:100%;min-height:100vh;overflow-x:hidden;
+}}
+
+/* ── Orb ── */
+.orb-wrap{{display:flex;flex-direction:column;align-items:center;padding:24px 0 10px;gap:12px;}}
+.orb{{
+    width:106px;height:106px;border-radius:50%;cursor:pointer;border:none;outline:none;
+    position:relative;flex-shrink:0;
+    background:radial-gradient(circle at 38% 32%, #63b3ed 0%, #4fd1c5 48%, #7c3aed 100%);
+    animation:orbIdle 4.5s ease-in-out infinite;
+    transition:transform .13s ease;
+}}
+.orb:hover{{transform:scale(1.05);}}
+.orb:active{{transform:scale(0.96);}}
+.orb.listening{{
+    background:radial-gradient(circle at 38% 32%, #fc8181 0%, #f6ad55 48%, #fc4e4e 100%)!important;
+    animation:orbListen .65s ease-in-out infinite!important;
+}}
+.orb.thinking{{
+    background:radial-gradient(circle at 38% 32%, #b794f4 0%, #7c3aed 48%, #553c9a 100%)!important;
+    animation:orbThink 1.1s ease-in-out infinite!important;
+}}
+.orb.speaking{{
+    animation:orbSpeak .75s ease-in-out infinite!important;
+}}
+@keyframes orbIdle{{
+    0%,100%{{box-shadow:0 0 0 0 rgba(99,179,237,0),0 14px 44px rgba(99,179,237,.18);transform:scale(1);}}
+    42%    {{box-shadow:0 0 0 10px rgba(99,179,237,.06),0 14px 52px rgba(79,209,197,.26);transform:scale(1.04);}}
+    78%    {{box-shadow:0 0 0 5px rgba(79,209,197,.04),0 14px 48px rgba(99,179,237,.20);transform:scale(1.02);}}
+}}
+@keyframes orbListen{{
+    0%,100%{{box-shadow:0 0 0 0 rgba(252,129,129,.82);transform:scale(1);}}
+    50%    {{box-shadow:0 0 0 28px rgba(252,129,129,0);transform:scale(1.13);}}
+}}
+@keyframes orbThink{{
+    0%,100%{{box-shadow:0 0 0 0 rgba(183,148,244,.72);transform:scale(1);}}
+    50%    {{box-shadow:0 0 0 24px rgba(183,148,244,0);transform:scale(1.08);}}
+}}
+@keyframes orbSpeak{{
+    0%,100%{{box-shadow:0 0 0 0 rgba(99,179,237,.82);transform:scale(1.02);}}
+    50%    {{box-shadow:0 0 0 26px rgba(99,179,237,0);transform:scale(1.13);}}
+}}
+
+/* Wave bars inside orb */
+.orb-waves{{
+    display:none;position:absolute;bottom:20px;left:50%;
+    transform:translateX(-50%);align-items:flex-end;gap:3px;height:24px;
+}}
 .orb.listening .orb-waves{{display:flex;}}
-.ow{{width:3px;border-radius:2px;background:rgba(255,255,255,.9);height:4px;animation:owAnim .55s ease-in-out infinite;}}
-.ow:nth-child(1){{animation-delay:.00s}}.ow:nth-child(2){{animation-delay:.10s}}.ow:nth-child(3){{animation-delay:.20s}}.ow:nth-child(4){{animation-delay:.10s}}.ow:nth-child(5){{animation-delay:.00s}}
-@keyframes owAnim{{0%,100%{{height:4px;opacity:.5;}}50%{{height:20px;opacity:1;}}}}
-.orb-status{{font-size:.66rem;color:#546070;letter-spacing:.09em;text-transform:uppercase;height:16px;text-align:center;}}
-.controls{{display:flex;gap:8px;padding:0 14px 10px;}}
-.ctrl-btn{{flex:1;padding:9px 0;border:none;border-radius:10px;font-family:'Sora',sans-serif;font-size:.71rem;font-weight:600;letter-spacing:.04em;cursor:pointer;transition:opacity .15s,transform .12s;}}
-.ctrl-btn:hover{{opacity:.82;}} .ctrl-btn:active{{transform:scale(.97);}}
-.btn-start{{background:linear-gradient(135deg,#2a6496,#1a7a6e);color:#e8f4ff;}}
+.ow{{width:3px;border-radius:2px;background:rgba(255,255,255,.92);height:4px;
+     animation:owAnim .58s ease-in-out infinite;}}
+.ow:nth-child(1){{animation-delay:.00s}} .ow:nth-child(2){{animation-delay:.10s}}
+.ow:nth-child(3){{animation-delay:.20s}} .ow:nth-child(4){{animation-delay:.30s}}
+.ow:nth-child(5){{animation-delay:.20s}} .ow:nth-child(6){{animation-delay:.10s}}
+.ow:nth-child(7){{animation-delay:.00s}}
+@keyframes owAnim{{0%,100%{{height:4px;opacity:.45;}}50%{{height:22px;opacity:1;}}}}
+
+/* Status text */
+.orb-status{{
+    font-size:.66rem;color:#4a5568;letter-spacing:.10em;
+    text-transform:uppercase;min-height:18px;text-align:center;
+    transition:color .3s;
+}}
+
+/* Language badge */
+.lang-badge{{
+    display:none;align-items:center;gap:7px;
+    padding:5px 14px;border-radius:22px;
+    background:rgba(79,209,197,.08);border:1px solid rgba(79,209,197,.22);
+    font-size:.64rem;color:#4fd1c5;letter-spacing:.05em;
+    animation:fadeUp .3s ease;
+}}
+.lang-badge.show{{display:flex;}}
+.lang-dot{{
+    width:6px;height:6px;border-radius:50%;background:#4fd1c5;
+    animation:ldPulse 2.2s ease-in-out infinite;
+}}
+@keyframes ldPulse{{0%,100%{{opacity:.30;transform:scale(1);}}50%{{opacity:1;transform:scale(1.4);}}}}
+
+/* Controls */
+.controls{{display:flex;gap:10px;padding:0 16px 12px;}}
+.ctrl-btn{{
+    flex:1;padding:10px 0;border:none;border-radius:11px;
+    font-family:'Sora',sans-serif;font-size:.71rem;font-weight:600;
+    letter-spacing:.04em;cursor:pointer;transition:opacity .15s,transform .12s;
+}}
+.ctrl-btn:hover{{opacity:.80;}} .ctrl-btn:active{{transform:scale(.97);}}
+.btn-start{{background:linear-gradient(135deg,#2a6496,#1a7a6e);color:#d6f0ff;}}
 .btn-stop {{background:rgba(252,129,129,.14);color:#fc8181;border:1px solid rgba(252,129,129,.28);}}
-.btn-mute {{background:rgba(255,255,255,.05);color:#8b9ab0;border:1px solid rgba(255,255,255,.08);}}
-.panel-crisis{{margin:0 12px 8px;padding:9px 13px;border-radius:10px;font-size:.70rem;line-height:1.55;display:none;}}
-.panel-crisis.show{{display:block;animation:fadeUp .3s ease;}}
-.panel-crisis.passive{{background:rgba(237,137,54,.10);border:1px solid rgba(237,137,54,.28);color:#ed8936;}}
-.panel-crisis.active {{background:rgba(252,78,78,.12); border:1px solid rgba(252,78,78,.30); color:#fc8181;}}
-.transcript{{margin:0 12px 10px;border:1px solid rgba(255,255,255,.07);border-radius:14px;background:rgba(8,12,24,.60);backdrop-filter:blur(8px);overflow-y:auto;max-height:265px;padding:10px;scroll-behavior:smooth;}}
-.transcript::-webkit-scrollbar{{width:3px;}} .transcript::-webkit-scrollbar-thumb{{background:rgba(255,255,255,.09);border-radius:2px;}}
+.btn-mute {{background:rgba(255,255,255,.05);color:#718096;border:1px solid rgba(255,255,255,.08);}}
+
+/* Crisis banner */
+.crisis-bar{{
+    margin:0 14px 10px;padding:10px 14px;border-radius:11px;
+    font-size:.72rem;line-height:1.6;display:none;
+}}
+.crisis-bar.show{{display:block;animation:fadeUp .3s ease;}}
+.crisis-bar.passive{{background:rgba(237,137,54,.09);border:1px solid rgba(237,137,54,.28);color:#ed8936;}}
+.crisis-bar.active {{background:rgba(252,78,78,.11); border:1px solid rgba(252,78,78,.32); color:#fc8181;}}
+
+/* Transcript */
+.transcript{{
+    margin:0 14px 10px;
+    border:1px solid rgba(255,255,255,.06);border-radius:16px;
+    background:rgba(6,12,24,.65);backdrop-filter:blur(10px);
+    overflow-y:auto;max-height:290px;padding:12px;scroll-behavior:smooth;
+}}
+.transcript::-webkit-scrollbar{{width:3px;}}
+.transcript::-webkit-scrollbar-thumb{{background:rgba(255,255,255,.08);border-radius:2px;}}
+
+/* Turns */
 .turn{{margin-bottom:13px;animation:fadeUp .28s ease;}}
-.turn-row{{display:flex;align-items:flex-start;gap:8px;}}
+.turn-row{{display:flex;align-items:flex-start;gap:9px;}}
 .turn-row.user-row{{flex-direction:row-reverse;}}
-.avatar{{width:27px;height:27px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:.57rem;font-weight:700;letter-spacing:.02em;}}
+.avatar{{
+    width:28px;height:28px;border-radius:50%;flex-shrink:0;
+    display:flex;align-items:center;justify-content:center;
+    font-size:.56rem;font-weight:700;letter-spacing:.02em;
+}}
 .avatar-ai  {{background:linear-gradient(135deg,#1a3050,#0d2840);color:#4fd1c5;border:1px solid rgba(79,209,197,.22);}}
 .avatar-user{{background:linear-gradient(135deg,#1e3a5f,#162d4a);color:#63b3ed;border:1px solid rgba(99,179,237,.22);}}
-.bubble{{max-width:80%;padding:9px 13px;font-size:.77rem;line-height:1.62;word-break:break-word;}}
-.bubble-ai  {{background:rgba(26,32,53,.92);border:1px solid rgba(255,255,255,.07);border-radius:4px 14px 14px 14px;color:#c8d4e6;}}
-.bubble-user{{background:rgba(30,58,95,.88);border:1px solid rgba(99,179,237,.16);border-radius:14px 4px 14px 14px;color:#bdd4f0;}}
-.turn-meta{{font-size:.58rem;color:#2e3a4a;margin-top:4px;display:flex;align-items:center;gap:5px;}}
+.bubble{{max-width:81%;padding:9px 13px;font-size:.79rem;line-height:1.65;word-break:break-word;}}
+.bubble-ai  {{background:rgba(20,28,50,.92);border:1px solid rgba(255,255,255,.07);
+              border-radius:4px 14px 14px 14px;color:#c8d4e6;}}
+.bubble-user{{background:rgba(28,52,90,.88);border:1px solid rgba(99,179,237,.16);
+              border-radius:14px 4px 14px 14px;color:#bdd4f0;}}
+.turn-meta{{font-size:.58rem;color:#2d3748;margin-top:4px;display:flex;align-items:center;gap:5px;}}
 .turn-row.user-row .turn-meta{{justify-content:flex-end;}}
 .meta-dot{{width:4px;height:4px;border-radius:50%;}}
-.panel-footer{{text-align:center;font-size:.58rem;color:#1e2a38;letter-spacing:.06em;padding-bottom:10px;}}
+.lang-tag{{
+    font-size:.55rem;padding:1px 6px;border-radius:10px;
+    background:rgba(79,209,197,.08);border:1px solid rgba(79,209,197,.18);color:#4fd1c5;
+}}
+
+/* Footer hint */
+.panel-hint{{
+    text-align:center;font-size:.62rem;color:#1e2a38;
+    letter-spacing:.06em;padding-bottom:12px;
+}}
+
 @keyframes fadeUp{{from{{opacity:0;transform:translateY(5px);}}to{{opacity:1;transform:translateY(0);}}}}
 </style>
 </head>
 <body>
-<div class="orb-section">
+
+<div class="orb-wrap">
     <button class="orb" id="orb">
-        <div class="orb-waves"><div class="ow"></div><div class="ow"></div><div class="ow"></div><div class="ow"></div><div class="ow"></div></div>
+        <div class="orb-waves">
+            <div class="ow"></div><div class="ow"></div><div class="ow"></div>
+            <div class="ow"></div><div class="ow"></div><div class="ow"></div>
+            <div class="ow"></div>
+        </div>
     </button>
-    <div class="orb-status" id="orbStatus">Tap orb · or press Start</div>
+    <div class="lang-badge" id="langBadge">
+        <div class="lang-dot"></div>
+        <span id="langText">Detecting…</span>
+    </div>
+    <div class="orb-status" id="orbStatus">Tap Start or press the orb to begin</div>
 </div>
+
 <div class="controls">
-    <button class="ctrl-btn btn-start" id="btnStart">▶&nbsp; Start</button>
-    <button class="ctrl-btn btn-stop"  id="btnStop" >■&nbsp; Stop</button>
-    <button class="ctrl-btn btn-mute"  id="btnMute" >🔇&nbsp; Mute</button>
+    <button class="ctrl-btn btn-start" id="btnStart">&#9654;&nbsp;Start</button>
+    <button class="ctrl-btn btn-stop"  id="btnStop">&#9632;&nbsp;Stop</button>
+    <button class="ctrl-btn btn-mute"  id="btnMute">&#128263;&nbsp;Mute</button>
 </div>
-<div class="panel-crisis" id="panelCrisis"></div>
-<div class="transcript"   id="transcript"></div>
-<div class="panel-footer">Voice session &nbsp;·&nbsp; Scroll to review</div>
+
+<div class="crisis-bar" id="crisisBar"></div>
+<div class="transcript"  id="transcript"></div>
+<div class="panel-hint">Speak naturally &nbsp;&#183;&nbsp; interrupt anytime &nbsp;&#183;&nbsp; any language</div>
 
 <script>
 (function(){{
-    const BACKEND  = "{backend_url}";
-    const JWT      = "{jwt}";
-    const PROFILES = {profiles_json};
-    const PREFERRED= {_PREFERRED_VOICES};
 
-    const orb=document.getElementById('orb'),orbStatus=document.getElementById('orbStatus');
-    const trans=document.getElementById('transcript'),crisis=document.getElementById('panelCrisis');
-    const btnStart=document.getElementById('btnStart'),btnStop=document.getElementById('btnStop'),btnMute=document.getElementById('btnMute');
+/* ── Config ── */
+const BACKEND    = "{backend_url}";
+const JWT        = "{jwt}";
+const PROFILES   = {profiles_json};
+const BCP47      = {bcp47_json};
+const CAT_COLORS = {cat_colors};
 
-    let recorder=null,audioChunks=[],stream=null;
-    let isListening=false,isProcessing=false,isMuted=false,continuous=false,srFallback='';
+/* ── DOM ── */
+const orb        = document.getElementById('orb');
+const orbStatus  = document.getElementById('orbStatus');
+const langBadge  = document.getElementById('langBadge');
+const langText   = document.getElementById('langText');
+const transcript = document.getElementById('transcript');
+const crisisBar  = document.getElementById('crisisBar');
+const btnStart   = document.getElementById('btnStart');
+const btnStop    = document.getElementById('btnStop');
+const btnMute    = document.getElementById('btnMute');
 
-    function setStatus(t){{orbStatus.textContent=t;}}
-    function setOrb(s){{orb.classList.remove('listening','thinking','speaking');if(s)orb.classList.add(s);}}
-    function hhmm(){{return new Date().toLocaleTimeString([],{{hour:'2-digit',minute:'2-digit'}});}}
+/* ── State ── */
+let recorder      = null;
+let audioChunks   = [];
+let micStream     = null;
+let isListening   = false;
+let isProcessing  = false;
+let isMuted       = false;
+let continuous    = false;
 
-    function appendTurn(role,text,meta){{
-        const isUser=role==='user';
-        const div=document.createElement('div');
-        div.className='turn';
-        const catColor=(meta&&meta.catColor)?meta.catColor:'#546070';
-        const metaHtml=meta?`<span class="meta-dot" style="background:${{catColor}}"></span>MHI&nbsp;${{meta.mhi}}&nbsp;·&nbsp;${{meta.category}}`:'';
-        div.innerHTML=`<div class="turn-row ${{isUser?'user-row':''}}"><div class="avatar ${{isUser?'avatar-user':'avatar-ai'}}">${{isUser?'You':'AI'}}</div><div style="flex:1;min-width:0;"><div class="bubble ${{isUser?'bubble-user':'bubble-ai'}}">${{text}}</div><div class="turn-meta">${{hhmm()}}${{metaHtml}}</div></div></div>`;
-        trans.appendChild(div);
-        trans.scrollTop=trans.scrollHeight;
+// The currently playing Audio element — so we can interrupt it instantly
+let currentAudio  = null;
+
+// Language state — updated by Whisper detection each turn
+let sessionLang     = 'en';
+let sessionLangName = 'English';
+
+// SpeechRecognition API — used ONLY for interrupt detection while AI speaks
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let interruptSR   = null;
+let interruptDone = false;
+
+/* ── Helpers ── */
+function setStatus(t) {{ orbStatus.textContent = t; }}
+function setOrb(s)    {{ orb.classList.remove('listening','thinking','speaking'); if(s) orb.classList.add(s); }}
+function hhmm()       {{ return new Date().toLocaleTimeString([],{{hour:'2-digit',minute:'2-digit'}}); }}
+
+function updateLangBadge(name, conf) {{
+    const pct = conf > 0 ? ' \u00b7 ' + Math.round(conf*100) + '%' : '';
+    langText.textContent = name + pct;
+    langBadge.classList.add('show');
+}}
+
+function esc(s) {{
+    return String(s)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}}
+
+function appendTurn(role, text, meta) {{
+    const isUser = (role === 'user');
+    const div    = document.createElement('div');
+    div.className = 'turn';
+    const catColor  = (meta && meta.catColor) ? meta.catColor : '#4a5568';
+    const langTag   = (meta && meta.langName && meta.langName !== 'English')
+        ? `<span class="lang-tag">${{esc(meta.langName)}}</span>` : '';
+    const metaHtml  = meta
+        ? `<span class="meta-dot" style="background:${{catColor}}"></span>MHI&nbsp;${{meta.mhi}}&nbsp;\u00b7&nbsp;${{esc(meta.category)}}&nbsp;${{langTag}}`
+        : '';
+    div.innerHTML =
+        `<div class="turn-row ${{isUser?'user-row':''}}">
+            <div class="avatar ${{isUser?'avatar-user':'avatar-ai'}}">${{isUser?'You':'AI'}}</div>
+            <div style="flex:1;min-width:0;">
+                <div class="bubble ${{isUser?'bubble-user':'bubble-ai'}}">${{esc(text)}}</div>
+                <div class="turn-meta">${{hhmm()}}&nbsp;${{metaHtml}}</div>
+            </div>
+        </div>`;
+    transcript.appendChild(div);
+    transcript.scrollTop = transcript.scrollHeight;
+}}
+
+function showCrisis(tier, score) {{
+    if (tier==='active' || score>=0.85) {{
+        crisisBar.className='crisis-bar active show';
+        crisisBar.innerHTML='&#9888; Please reach out now &mdash; <strong>AASRA:</strong> +91-9820466626 &nbsp;\u00b7&nbsp; <strong>Kiran:</strong> 1800-599-0019 (free, 24/7)';
+    }} else if (tier==='passive' || score>=0.55) {{
+        crisisBar.className='crisis-bar passive show';
+        crisisBar.innerHTML='Support is here &mdash; <strong>Kiran:</strong> 1800-599-0019 &nbsp;\u00b7&nbsp; <strong>Vandrevala:</strong> +91-1860-2662-345';
+    }} else {{
+        crisisBar.className='crisis-bar';
     }}
+}}
 
-    function showCrisis(tier,score){{
-        if(tier==='active'||score>=0.85){{crisis.className='panel-crisis active show';crisis.innerHTML='⚠ Please reach out now — <strong>AASRA:</strong> +91-9820466626 &nbsp;·&nbsp; <strong>Kiran:</strong> 1800-599-0019';}}
-        else if(tier==='passive'||score>=0.55){{crisis.className='panel-crisis passive show';crisis.innerHTML='Support is here — <strong>Kiran:</strong> 1800-599-0019 &nbsp;·&nbsp; <strong>Vandrevala:</strong> +91-1860-2662-345';}}
-        else{{crisis.className='panel-crisis';}}
+/* ── Dashboard sync (postMessage to parent Streamlit window) ── */
+function syncDashboard(userText, reply, mhi, category, tier, langCode) {{
+    try {{
+        window.parent.postMessage({{
+            type:           'VOICE_TURN_V5',
+            user_text:      userText,
+            assistant_text: reply,
+            mhi:            mhi,
+            category:       category,
+            crisis_tier:    tier,
+            language_code:  langCode,
+            ts:             new Date().toISOString(),
+        }}, '*');
+    }} catch(e) {{ console.debug('syncDash', e); }}
+}}
+
+/* ══════════════════════════════════════════════════════════════
+   INTERRUPT MECHANISM
+   ─────────────────────────────────────────────────────────────
+   While AI is speaking we keep a SpeechRecognition instance
+   running in the background purely for ONSET detection.
+   The moment the browser hears ANY audio (onstart fires),
+   we pause the current Audio element synchronously — AI stops
+   within <100ms. We then capture the full utterance with
+   MediaRecorder and process it normally.
+   ══════════════════════════════════════════════════════════════ */
+
+function startInterruptWatcher() {{
+    if (!SR || !currentAudio) return;
+    interruptDone = false;
+    interruptSR   = new SR();
+    interruptSR.lang          = BCP47[sessionLang] || 'en-IN';
+    interruptSR.continuous    = false;
+    interruptSR.interimResults= true;
+    interruptSR.maxAlternatives = 1;
+
+    interruptSR.onstart = function() {{
+        // User started speaking — stop AI immediately
+        if (currentAudio && !currentAudio.paused) {{
+            currentAudio.pause();
+            currentAudio.currentTime = 0;
+        }}
+        window.speechSynthesis.cancel();
+        currentAudio = null;
+
+        if (!interruptDone) {{
+            interruptDone = true;
+            stopInterruptWatcher();
+            // Small buffer so MediaRecorder catches from start of speech
+            setTimeout(function() {{
+                if (!isListening && !isProcessing) {{
+                    setOrb('listening');
+                    setStatus('Listening\u2026');
+                    _startMediaRecorder();
+                }}
+            }}, 60);
+        }}
+    }};
+    interruptSR.onerror = function() {{ stopInterruptWatcher(); }};
+    interruptSR.onend   = function() {{ if (!interruptDone) stopInterruptWatcher(); }};
+
+    try {{ interruptSR.start(); }}
+    catch(e) {{ /* ignore — SR may not be available */ }}
+}}
+
+function stopInterruptWatcher() {{
+    if (interruptSR) {{
+        try {{ interruptSR.abort(); }} catch(e) {{}}
+        interruptSR = null;
     }}
+}}
 
-    function greet(){{
-        const msg="Hi there. I'm your Well-Being companion. This is a safe, private space — just for you. Whenever you're ready, just speak and I'll listen.";
-        appendTurn('assistant',msg,null);
-        if(!isMuted)speakWS(msg,'default','none').catch(()=>{{}});
-    }}
+/* ══════════════════════════════════════════════════════════════
+   TTS — speaks in detected language with Indian accent
+   ══════════════════════════════════════════════════════════════ */
 
-    async function speakResponse(text,emotion,tier){{
-        if(isMuted)return;
-        setOrb('speaking');setStatus('Speaking…');
-        try{{
-            const res=await fetch(`${{BACKEND}}/voice/speak`,{{method:'POST',headers:{{'Content-Type':'application/json','Authorization':`Bearer ${{JWT}}`}},body:JSON.stringify({{text,emotion_label:emotion,crisis_tier:tier}})}});
-            if(!res.ok)throw new Error('tts');
-            const blob=await res.blob();
-            const url=URL.createObjectURL(blob);
-            const aud=new Audio(url);
-            await new Promise(r=>{{aud.onended=r;aud.onerror=r;aud.play().catch(r);}});
-            URL.revokeObjectURL(url);
-        }}catch(_){{await speakWS(text,emotion,tier);}}
-        setOrb('');
-    }}
+async function speakResponse(text, langCode, emotion, tier) {{
+    if (isMuted) return;
+    setOrb('speaking');
+    setStatus('Speaking\u2026 (speak to interrupt)');
+    stopInterruptWatcher();
 
-    function speakWS(text,emotion,tier){{
-        return new Promise(resolve=>{{
-            window.speechSynthesis.cancel();
-            const key=(tier==='active'||tier==='passive')?'crisis':(emotion||'default');
-            const p=PROFILES[key]||PROFILES['default'];
-            const u=new SpeechSynthesisUtterance(text.replace(/[*#`_]/g,''));
-            u.rate=p.rate;u.pitch=p.pitch;u.volume=p.volume;
-            function go(){{const vs=window.speechSynthesis.getVoices();for(const n of PREFERRED){{const v=vs.find(x=>x.name===n);if(v){{u.voice=v;break;}}}}u.onend=resolve;u.onerror=resolve;window.speechSynthesis.speak(u);}}
-            window.speechSynthesis.getVoices().length>0?go():(window.speechSynthesis.onvoiceschanged=go);
+    try {{
+        const res = await fetch(`${{BACKEND}}/voice/speak`, {{
+            method:  'POST',
+            headers: {{'Content-Type':'application/json','Authorization':`Bearer ${{JWT}}`}},
+            body:    JSON.stringify({{
+                text:          text,
+                language_code: langCode,
+                emotion_label: emotion,
+                crisis_tier:   tier,
+            }}),
         }});
+        if (!res.ok) throw new Error('tts-' + res.status);
+
+        const blob  = await res.blob();
+        const url   = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        currentAudio = audio;
+
+        // Start interrupt watcher as soon as playback begins
+        audio.onplay = function() {{ startInterruptWatcher(); }};
+
+        await new Promise(function(resolve) {{
+            audio.onended = function() {{ currentAudio=null; resolve(); }};
+            audio.onerror = function() {{ currentAudio=null; resolve(); }};
+            audio.play().catch(function() {{ currentAudio=null; resolve(); }});
+        }});
+        URL.revokeObjectURL(url);
+    }} catch(_) {{
+        // Browser TTS fallback — also interruptible via stopInterruptWatcher()
+        await speakBrowserTTS(text, langCode, emotion, tier);
     }}
 
-    async function transcribeBlob(blob){{
-        try{{
-            const form=new FormData();form.append('audio',blob,'recording.webm');
-            const res=await fetch(`${{BACKEND}}/voice/transcribe`,{{method:'POST',headers:{{'Authorization':`Bearer ${{JWT}}`}},body:form}});
-            if(!res.ok)return null;
-            const data=await res.json();return data.transcript||'';
-        }}catch(_){{return null;}}
-    }}
+    stopInterruptWatcher();
+    currentAudio = null;
+}}
 
-    // ── Dashboard sync via postMessage to parent window ──────────────────────
-    // The MAIN Streamlit page has a listener injected by _inject_postmessage_listener()
-    // postMessage from iframe → parent is ALWAYS allowed regardless of cross-origin.
-    function syncDashboard(userText,reply,mhi,category,tier){{
-        try{{
-            window.parent.postMessage({{
-                type:'VOICE_TURN',
-                user_text:userText,
-                assistant_text:reply,
-                mhi:mhi,
-                category:category,
-                crisis_tier:tier,
-                ts:new Date().toISOString()
-            }},'*');
-        }}catch(e){{console.debug('syncDashboard error:',e);}}
-    }}
+function speakBrowserTTS(text, langCode, emotion, tier) {{
+    return new Promise(function(resolve) {{
+        window.speechSynthesis.cancel();
+        const key   = (tier==='active'||tier==='passive') ? 'crisis' : (emotion||'default');
+        const prof  = PROFILES[key] || PROFILES['default'];
+        const u     = new SpeechSynthesisUtterance(text.replace(/[*#`_]/g,''));
+        u.lang      = BCP47[langCode] || 'en-IN';
+        u.rate      = prof.rate;
+        u.pitch     = prof.pitch;
+        u.volume    = prof.volume;
 
-    async function sendChat(text){{
-        setOrb('thinking');setStatus('Thinking…');
-        try{{
-            const res=await fetch(`${{BACKEND}}/chat`,{{method:'POST',headers:{{'Content-Type':'application/json','Authorization':`Bearer ${{JWT}}`}},body:JSON.stringify({{message:text}})}});
-            if(!res.ok)throw new Error('chat');
-            const data=await res.json();
-            const reply=data.response||'',mhi=data.mhi||0,category=data.category||'',tier=data.crisis_tier||'none',score=data.crisis_score||0;
-            const scores=data.emotion_scores||{{}},emotion=Object.keys(scores).reduce((a,b)=>scores[a]>scores[b]?a:b,'neutral');
-            const catColors={{"Stable":"#48bb78","Mild Stress":"#68d391","Moderate Distress":"#ed8936","Depression Risk":"#fc8181","High Risk":"#f56565","Crisis Risk":"#fc4e4e"}};
-            showCrisis(tier,score);
-            appendTurn('assistant',reply,{{mhi,category,catColor:catColors[category]||'#546070'}});
-            syncDashboard(text,reply,mhi,category,tier);
-            await speakResponse(reply,emotion,tier);
-            if(continuous&&tier!=='active'){{startListening();}}
-            else{{setOrb('');setStatus(continuous?'Listening…':'Tap orb to speak again');isProcessing=false;}}
-        }}catch(e){{
-            console.error('Chat error:',e);setOrb('');setStatus('Error — tap to retry');isProcessing=false;
+        function go() {{
+            const voices = window.speechSynthesis.getVoices();
+            // Try exact lang match first, then language prefix
+            const match  = voices.find(v => v.lang === u.lang)
+                        || voices.find(v => v.lang.startsWith(u.lang.split('-')[0]));
+            if (match) u.voice = match;
+            u.onend  = resolve;
+            u.onerror = resolve;
+            window.speechSynthesis.speak(u);
+        }}
+        window.speechSynthesis.getVoices().length > 0 ? go() :
+            (window.speechSynthesis.onvoiceschanged = go);
+    }});
+}}
+
+/* ══════════════════════════════════════════════════════════════
+   STT — calls /voice/transcribe, reads language_code from response
+   ══════════════════════════════════════════════════════════════ */
+
+async function transcribeBlob(blob) {{
+    try {{
+        const form = new FormData();
+        form.append('audio', blob, 'recording.webm');
+        const res  = await fetch(`${{BACKEND}}/voice/transcribe`, {{
+            method:  'POST',
+            headers: {{'Authorization': `Bearer ${{JWT}}`}},
+            body:    form,
+        }});
+        if (!res.ok) return null;
+        // Returns: {{ transcript, language_code, language_name, confidence }}
+        return await res.json();
+    }} catch(e) {{ return null; }}
+}}
+
+/* ══════════════════════════════════════════════════════════════
+   CHAT — sends text to /chat, reads full response
+   ══════════════════════════════════════════════════════════════ */
+
+async function sendChat(userText) {{
+    setOrb('thinking');
+    setStatus('Thinking\u2026');
+
+    try {{
+        const res = await fetch(`${{BACKEND}}/chat`, {{
+            method:  'POST',
+            headers: {{'Content-Type':'application/json','Authorization':`Bearer ${{JWT}}`}},
+            body:    JSON.stringify({{message: userText, language_code: sessionLang}}),
+        }});
+        if (!res.ok) throw new Error('chat-' + res.status);
+
+        const data     = await res.json();
+        const reply    = data.response     || '';
+        const mhi      = data.mhi          || 0;
+        const category = data.category     || '';
+        const tier     = data.crisis_tier  || 'none';
+        const score    = data.crisis_score || 0;
+        const scores   = data.emotion_scores || {{}};
+        // Dominant emotion for TTS speed
+        const emotion  = Object.keys(scores).length
+            ? Object.keys(scores).reduce((a,b) => scores[a]>scores[b] ? a : b, 'neutral')
+            : 'neutral';
+
+        showCrisis(tier, score);
+        appendTurn('assistant', reply, {{
+            mhi:      mhi,
+            category: category,
+            catColor: CAT_COLORS[category] || '#4a5568',
+            langName: sessionLangName,
+        }});
+        syncDashboard(userText, reply, mhi, category, tier, sessionLang);
+
+        // Speak in the detected language
+        await speakResponse(reply, sessionLang, emotion, tier);
+
+        if (continuous && tier !== 'active') {{
+            startListening();
+        }} else {{
+            setOrb('');
+            setStatus(continuous ? 'Listening\u2026' : 'Tap orb or Start to continue');
+            isProcessing = false;
+        }}
+
+    }} catch(err) {{
+        console.error('sendChat error:', err);
+        setOrb('');
+        setStatus('Something went wrong \u2014 tap to retry');
+        isProcessing = false;
+    }}
+}}
+
+/* ══════════════════════════════════════════════════════════════
+   RECORDING
+   ══════════════════════════════════════════════════════════════ */
+
+function _startMediaRecorder() {{
+    if (isListening) return;
+    audioChunks = [];
+    const mime  = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+                  ? 'audio/webm;codecs=opus' : 'audio/webm';
+    recorder    = new MediaRecorder(micStream, {{mimeType: mime}});
+
+    recorder.ondataavailable = function(e) {{
+        if (e.data && e.data.size > 0) audioChunks.push(e.data);
+    }};
+
+    recorder.onstop = async function() {{
+        isListening  = false;
+        isProcessing = true;
+
+        const blob = new Blob(audioChunks, {{type:'audio/webm'}});
+        setOrb('thinking');
+        setStatus('Processing\u2026');
+
+        // ── Language-detecting STT ──
+        const stt = await transcribeBlob(blob);
+
+        if (!stt || !stt.transcript || !stt.transcript.trim()) {{
+            setStatus('No speech detected \u2014 tap orb to try again');
+            setOrb('');
+            isProcessing = false;
+            if (continuous) setTimeout(startListening, 900);
+            return;
+        }}
+
+        // Update session language from Whisper detection
+        sessionLang     = stt.language_code || 'en';
+        sessionLangName = stt.language_name  || 'English';
+        updateLangBadge(sessionLangName, stt.confidence || 0);
+
+        appendTurn('user', stt.transcript, null);
+        await sendChat(stt.transcript);
+    }};
+
+    recorder.start(200);  // 200ms chunks
+    isListening = true;
+    setOrb('listening');
+    setStatus('Listening\u2026 speak naturally');
+
+    // Auto-stop after 10 s silence guard
+    const autoStopTimer = setTimeout(function() {{ stopRecording(); }}, 10000);
+    // Tap orb to stop early
+    orb.onclick = function() {{ clearTimeout(autoStopTimer); stopRecording(); }};
+}}
+
+async function startListening() {{
+    if (isListening || isProcessing) return;
+
+    // Interrupt any ongoing AI speech
+    if (currentAudio && !currentAudio.paused) {{
+        currentAudio.pause();
+        currentAudio = null;
+    }}
+    window.speechSynthesis.cancel();
+    stopInterruptWatcher();
+
+    // Get mic if we don't have it yet
+    if (!micStream) {{
+        try {{
+            micStream = await navigator.mediaDevices.getUserMedia({{audio: true}});
+        }} catch(e) {{
+            setStatus('Microphone access denied \u2014 allow in browser settings');
+            return;
         }}
     }}
+    _startMediaRecorder();
+}}
 
-    async function startListening(){{
-        if(isListening||isProcessing)return;
-        try{{stream=await navigator.mediaDevices.getUserMedia({{audio:true}});}}
-        catch(_){{setStatus('Microphone access denied');return;}}
-        audioChunks=[];srFallback='';
-        const mime=MediaRecorder.isTypeSupported('audio/webm;codecs=opus')?'audio/webm;codecs=opus':'audio/webm';
-        recorder=new MediaRecorder(stream,{{mimeType:mime}});
-        recorder.ondataavailable=e=>{{if(e.data?.size>0)audioChunks.push(e.data);}};
-        const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-        let sr=null;
-        if(SR){{sr=new SR();sr.lang='en-US';sr.interimResults=false;sr.continuous=false;sr.onresult=e=>{{for(let i=e.resultIndex;i<e.results.length;i++)if(e.results[i].isFinal)srFallback+=e.results[i][0].transcript;}};try{{sr.start();}}catch(_){{}}}}
-        recorder.onstop=async()=>{{
-            if(sr)try{{sr.stop();}}catch(_){{}}
-            stream?.getTracks().forEach(t=>t.stop());stream=null;isListening=false;isProcessing=true;
-            const blob=new Blob(audioChunks,{{type:'audio/webm'}});
-            setOrb('thinking');setStatus('Processing…');
-            let text=await transcribeBlob(blob);
-            if(text===null||text==='')text=srFallback;
-            if(!text?.trim()){{setStatus('No speech — tap orb to try again');setOrb('');isProcessing=false;if(continuous)setTimeout(startListening,1200);return;}}
-            appendTurn('user',text,null);
-            await sendChat(text);
-        }};
-        recorder.start(250);isListening=true;setOrb('listening');setStatus('Listening… tap orb to stop');
-        let autoStop=setTimeout(()=>stopRecording(),9000);
-        orb.onclick=()=>{{clearTimeout(autoStop);stopRecording();}};
+function stopRecording() {{
+    if (!isListening) return;
+    if (recorder && recorder.state !== 'inactive') recorder.stop();
+}}
+
+function fullStop() {{
+    continuous = false;
+    if (isListening) stopRecording();
+    if (currentAudio) {{ currentAudio.pause(); currentAudio = null; }}
+    window.speechSynthesis.cancel();
+    stopInterruptWatcher();
+    setOrb('');
+    setStatus('Stopped \u2014 tap Start or orb to resume');
+    isProcessing = false;
+}}
+
+/* ── Greeting ── */
+async function greet() {{
+    const msg = "Hey, really glad you're here. This is your space \u2014 completely private and just for you. You can talk to me about anything, in any language you feel comfortable with. How are you doing today?";
+    appendTurn('assistant', msg, null);
+    if (!isMuted) {{
+        await speakResponse(msg, 'en', 'neutral', 'none');
     }}
+    if (continuous) startListening();
+    else {{ setOrb(''); setStatus('Tap Start to begin talking'); }}
+}}
 
-    function stopRecording(){{if(!isListening)return;if(recorder?.state!=='inactive')recorder.stop();}}
+/* ── Button handlers ── */
+btnStart.addEventListener('click', function() {{
+    continuous = true;
+    window.speechSynthesis.cancel();
+    if (currentAudio) {{ currentAudio.pause(); currentAudio = null; }}
+    if (!isListening && !isProcessing) startListening();
+}});
 
-    btnStart.addEventListener('click',()=>{{continuous=true;window.speechSynthesis.cancel();if(!isListening&&!isProcessing)startListening();}});
-    btnStop.addEventListener('click',()=>{{continuous=false;if(isListening)stopRecording();window.speechSynthesis.cancel();setOrb('');setStatus('Stopped — tap orb or Start to resume');isProcessing=false;}});
-    btnMute.addEventListener('click',()=>{{isMuted=!isMuted;btnMute.textContent=isMuted?'🔊  Unmute':'🔇  Mute';if(isMuted)window.speechSynthesis.cancel();}});
-    orb.addEventListener('click',()=>{{if(isProcessing)return;if(isListening){{stopRecording();}}else{{continuous=false;startListening();}}}});
+btnStop.addEventListener('click', fullStop);
 
-    greet();
+btnMute.addEventListener('click', function() {{
+    isMuted = !isMuted;
+    btnMute.textContent = isMuted ? '\U0001F50A\u00A0Unmute' : '\U0001F507\u00A0Mute';
+    if (isMuted) {{
+        if (currentAudio) {{ currentAudio.pause(); currentAudio = null; }}
+        window.speechSynthesis.cancel();
+        stopInterruptWatcher();
+    }}
+}});
+
+orb.addEventListener('click', function() {{
+    if (isProcessing) return;
+    if (isListening) {{ stopRecording(); }}
+    else {{ continuous = false; startListening(); }}
+}});
+
+/* ── Init ── */
+greet();
+
 }})();
 </script>
 </body>
 </html>"""
 
 
-# ── Compact mic button ────────────────────────────────────────────────────────
-
-_MIC_BTN_HTML = """<!DOCTYPE html><html><head><meta charset="utf-8"><style>
-*{margin:0;padding:0;box-sizing:border-box;}html,body{width:36px;height:36px;overflow:hidden;background:transparent;}
-#b{width:36px;height:36px;border-radius:50%;border:none;background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .18s;outline:none;}
-#b:hover{background:rgba(99,179,237,.12);}#b.on{background:rgba(252,129,129,.14);animation:g 1.4s ease-out infinite;}
-@keyframes g{0%{box-shadow:0 0 0 0 rgba(252,129,129,.6);}70%{box-shadow:0 0 0 10px rgba(252,129,129,0);}100%{box-shadow:0 0 0 0 rgba(252,129,129,0);}}
-#ws{display:none;align-items:flex-end;justify-content:center;gap:2px;height:18px;}#ws.on{display:flex;}
-.w{width:2px;border-radius:1px;background:#fc8181;height:3px;animation:wv .7s ease-in-out infinite;}
-.w:nth-child(1){animation-delay:.00s}.w:nth-child(2){animation-delay:.10s}.w:nth-child(3){animation-delay:.20s}
-.w:nth-child(4){animation-delay:.30s}.w:nth-child(5){animation-delay:.20s}.w:nth-child(6){animation-delay:.10s}.w:nth-child(7){animation-delay:.00s}
-@keyframes wv{0%,100%{height:3px;opacity:.5;}50%{height:16px;opacity:1;}}
-</style></head><body>
-<button id="b" title="Tap to speak">
-<svg id="mic" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#63b3ed" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-<path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-<line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
-<div id="ws"><div class="w"></div><div class="w"></div><div class="w"></div><div class="w"></div><div class="w"></div><div class="w"></div><div class="w"></div></div>
-</button>
+# ── Inject aria-label patcher (runs in Streamlit main page) ─────────────────
+_LABEL_PATCHER = """
 <script>
 (function(){
-    const b=document.getElementById('b'),m=document.getElementById('mic'),ws=document.getElementById('ws');
-    let r=null,on=false;
-    const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-    if(!SR){b.style.opacity='.3';return;}
-    function setOn(v){on=v;b.classList.toggle('on',v);m.style.display=v?'none':'block';ws.classList.toggle('on',v);}
-    function inject(t){
-        const ta=window.parent.document.querySelector('textarea[data-testid="stChatInputTextArea"]');
-        if(!ta)return;
-        const s=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;
-        s.call(ta,t);ta.dispatchEvent(new Event('input',{bubbles:true}));ta.dispatchEvent(new Event('change',{bubbles:true}));ta.focus();
-    }
-    function go(){r=new SR();r.lang='en-US';r.interimResults=true;r.continuous=false;r.onstart=()=>setOn(true);r.onresult=e=>{let f='';for(let i=e.resultIndex;i<e.results.length;i++)if(e.results[i].isFinal)f+=e.results[i][0].transcript;if(f){inject(f.trim());stop();}};r.onerror=()=>stop();r.onend=()=>setOn(false);try{r.start();}catch(_){setOn(false);}}
-    function stop(){if(r){try{r.stop();}catch(_){}r=null;}setOn(false);}
-    b.addEventListener('click',()=>on?stop():go());
-})();
-</script></body></html>"""
-
-
-# ── Backend helpers ───────────────────────────────────────────────────────────
-
-def _headers():
-    jwt = st.session_state.get("jwt")
-    if not jwt: raise Exception("not authenticated")
-    return {"Authorization": f"Bearer {jwt}"}
-
-def send_chat(message: str) -> dict:
-    r = requests.post(f"{BACKEND_URL}/chat", json={"message": message}, headers=_headers(), timeout=30)
-    r.raise_for_status()
-    return r.json()
-
-def get_report() -> bytes:
-    r = requests.get(f"{BACKEND_URL}/report", headers=_headers(), timeout=30)
-    r.raise_for_status()
-    return r.content
-
-def get_timeline() -> list:
-    r = requests.get(f"{BACKEND_URL}/user/timeline", headers=_headers(), timeout=10)
-    r.raise_for_status()
-    return r.json()
-
-
-# ── UI sub-components ─────────────────────────────────────────────────────────
-
-def _empty_state():
-    st.markdown("""<div class="empty-state"><div class="empty-orb"></div>
-    <div class="empty-headline">How are you feeling today?</div>
-    <div class="empty-sub">A safe, private space — just for you.<br>Share whatever is on your mind.</div>
-    <div class="empty-pills">
-        <span class="empty-pill"><span class="empty-pill-dot" style="background:#63b3ed;"></span>Emotion aware</span>
-        <span class="empty-pill"><span class="empty-pill-dot" style="background:#4fd1c5;"></span>Always private</span>
-        <span class="empty-pill"><span class="empty-pill-dot" style="background:#b794f4;"></span>CBT guided</span>
-    </div></div>""", unsafe_allow_html=True)
-
-def _msg_meta(emotion, mhi, category):
-    meta = _CATEGORY_META.get(category, {"color": "#546070", "icon": "●"})
-    st.markdown(f"""<div class="msg-meta">
-        <span class="meta-chip chip-emotion">{emotion}</span>
-        <span class="meta-chip chip-mhi">MHI&nbsp;{mhi}</span>
-        <span class="meta-chip chip-category" style="color:{meta['color']};border-color:{meta['color']}33;background:{meta['color']}12;">{meta['icon']}&nbsp;{category}</span>
-    </div>""", unsafe_allow_html=True)
-
-def _crisis_banner(tier, score):
-    if tier == "active" or score >= 0.85:
-        st.markdown("""<div class="crisis-active"><span style="font-size:1rem;">⚠</span>
-        <span>Your safety matters. Please reach out right now:<br>
-        <strong>AASRA:</strong> +91-9820466626 &nbsp;·&nbsp; <strong>Kiran:</strong> 1800-599-0019 (free, 24/7) &nbsp;·&nbsp; <strong>iCall:</strong> +91-9152987821</span></div>""", unsafe_allow_html=True)
-    elif tier == "passive" or score >= 0.55:
-        st.markdown("""<div class="crisis-passive"><span style="font-size:1rem;">◈</span>
-        <span>What you shared sounds really heavy. Real support is here —<br>
-        <strong>Kiran:</strong> 1800-599-0019 &nbsp;·&nbsp; <strong>Vandrevala:</strong> +91-1860-2662-345</span></div>""", unsafe_allow_html=True)
-
-def _speaking_row():
-    st.markdown("""<div class="speaking-row">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
-        <span>Speaking</span>
-        <div class="spk-bars"><div class="spk-bar"></div><div class="spk-bar"></div><div class="spk-bar"></div><div class="spk-bar"></div><div class="spk-bar"></div></div>
-    </div>""", unsafe_allow_html=True)
-
-def _speak_text_js(text, emotion, tier):
-    clean = re.sub(r"\*{1,3}|#{1,6}\s?|`{1,3}|_{1,2}|-{2,}|\[|\]|\(.*?\)", "", text)
-    clean = re.sub(r"\n+", " ", clean).strip()
-    safe  = clean.replace("\\","\\\\").replace('"','\\"').replace("'","\\'")
-    profile = _WEB_SPEECH_PROFILES["crisis"] if tier in ("active","passive") \
-              else _WEB_SPEECH_PROFILES.get(emotion, _WEB_SPEECH_PROFILES["default"])
-    st.markdown(f"""<script>(function(){{window.speechSynthesis.cancel();const u=new SpeechSynthesisUtterance("{safe}");u.rate={profile['rate']};u.pitch={profile['pitch']};u.volume={profile['volume']};const pref={_PREFERRED_VOICES};function go(){{const vs=window.speechSynthesis.getVoices();for(const n of pref){{const v=vs.find(x=>x.name===n);if(v){{u.voice=v;break;}}}}window.speechSynthesis.speak(u);}}window.speechSynthesis.getVoices().length>0?go():(window.speechSynthesis.onvoiceschanged=go);}})();</script>""", unsafe_allow_html=True)
-
-def _cancel_speech_js():
-    st.markdown("<script>window.speechSynthesis.cancel();</script>", unsafe_allow_html=True)
-
-
-# ── Mode renders ──────────────────────────────────────────────────────────────
-
-def _render_text_mode(voice_enabled: bool) -> None:
-    if not st.session_state.chat_history:
-        _empty_state()
-
-    for msg in st.session_state.chat_history:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
-            if msg["role"] == "assistant" and msg.get("meta"):
-                m = msg["meta"]
-                _msg_meta(m.get("emotion","neutral"), m.get("mhi",0), m.get("category",""))
-
-    st.markdown("""<style>
-    [data-testid="stChatInput"] textarea{padding-right:5.5rem!important}
-    [data-testid="stBottom"]{position:relative!important}
-    [data-testid="stBottom"]>div{position:relative!important}
-    [data-testid="stBottom"] iframe{position:absolute!important;right:54px!important;bottom:13px!important;width:36px!important;height:36px!important;z-index:200!important;border:none!important;background:transparent!important;pointer-events:all!important}
-    </style>""", unsafe_allow_html=True)
-    components.html(_MIC_BTN_HTML, height=36, scrolling=False)
-
-    user_input = st.chat_input("Share how you're feeling…")
-    if not user_input:
-        return
-
-    _cancel_speech_js()
-    st.session_state.chat_history.append({"role":"user","content":user_input})
-    with st.chat_message("user"):
-        st.markdown(user_input)
-
-    with st.chat_message("assistant"):
-        ph = st.empty()
-        ph.markdown('<div class="typing-wrap"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div>', unsafe_allow_html=True)
-        try:
-            data         = send_chat(user_input)
-            reply        = data.get("response","")
-            mhi          = data.get("mhi",0)
-            category     = data.get("category","")
-            crisis_score = data.get("crisis_score",0.0)
-            crisis_tier  = data.get("crisis_tier","none")
-            scores       = data.get("emotion_scores",{"neutral":1.0})
-            emotion      = max(scores, key=scores.get)
-
-            if mhi:
-                st.session_state.mhi_log.append({
-                    "timestamp": datetime.now().isoformat(),
-                    "mhi": mhi, "category": category, "source": "text",
-                })
-            st.session_state.chat_history.append({
-                "role":"assistant","content":reply,
-                "meta":{"emotion":emotion,"mhi":mhi,"category":category},
-            })
-            ph.empty()
-            st.markdown(reply)
-            _msg_meta(emotion, mhi, category)
-            if voice_enabled and reply:
-                _speak_text_js(reply, emotion, crisis_tier)
-                _speaking_row()
-            _crisis_banner(crisis_tier, crisis_score)
-
-        except Exception as exc:
-            ph.empty()
-            if "not authenticated" in str(exc).lower():
-                st.error("Session expired — please log in again.")
-                st.session_state.pop("jwt", None)
-            else:
-                st.error("Something went wrong. Please try again.")
-
-
-def _render_voice_mode() -> None:
-    jwt = st.session_state.get("jwt","")
-    if not jwt:
-        st.warning("Not authenticated.")
-        return
-
-    # ── Inject postMessage listener into the MAIN page context ───────────────
-    # This is the key fix: st.markdown scripts run in the top Streamlit window,
-    # NOT inside an iframe. So this listener correctly receives postMessages
-    # from the voice panel iframe and writes to the hidden input below.
-    _inject_postmessage_listener()
-
-    # ── Hidden sync input (invisible data bridge) ─────────────────────────────
-    raw_sync = st.text_input(
-        "vsync",
-        value="",
-        key="voice_sync_bridge",
-        label_visibility="hidden",
-    )
-    # Override label so JS can find it by aria-label="__vsync__"
-    st.markdown("""<script>
-    (function(){
-        var inputs=document.querySelectorAll('input[type="text"]');
+    function patch(){
+        var inputs = document.querySelectorAll('input[type="text"]');
         for(var i=0;i<inputs.length;i++){
-            var lbl=document.querySelector('label[for="'+inputs[i].id+'"]');
-            if(lbl&&lbl.textContent.trim()==='vsync'){
-                inputs[i].setAttribute('aria-label','__vsync__');
-                break;
+            var lbl = document.querySelector('label[for="'+inputs[i].id+'"]');
+            if(lbl && lbl.textContent.trim().indexOf('__vsync_v5_label__') !== -1){
+                inputs[i].setAttribute('aria-label','__vsync_v5__');
             }
         }
-    })();
-    </script>""", unsafe_allow_html=True)
+    }
+    setTimeout(patch, 300);
+    setTimeout(patch, 900);
+    setTimeout(patch, 2000);
+})();
+</script>
+"""
 
-    # ── Process incoming voice turn data ──────────────────────────────────────
-    if raw_sync and raw_sync != st.session_state.get("_last_vsync",""):
-        st.session_state["_last_vsync"] = raw_sync
+
+# ── Main render ───────────────────────────────────────────────────────────────
+
+def render_chat(voice_enabled: bool = False) -> None:
+    """
+    Drop-in replacement for render_chat().
+    Voice-only — text mode removed entirely.
+    """
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
+    if "mhi_log" not in st.session_state:
+        st.session_state.mhi_log = []
+
+    jwt = st.session_state.get("jwt", "")
+    if not jwt:
+        st.warning("Please log in to use the voice companion.")
+        return
+
+    st.markdown(_CSS, unsafe_allow_html=True)
+
+    # Inject postMessage listener (main page context — not inside any iframe)
+    st.markdown(_LISTENER_SCRIPT, unsafe_allow_html=True)
+    st.markdown(_LABEL_PATCHER,   unsafe_allow_html=True)
+
+    # Hidden sync input — receives VOICE_TURN_V5 payloads via JS
+    raw_sync = st.text_input(
+        "__vsync_v5_label__",
+        value="",
+        key="voice_sync_v5",
+        label_visibility="hidden",
+    )
+
+    # Process incoming voice turn from panel
+    if raw_sync and raw_sync != st.session_state.get("_vsync_v5_last", ""):
+        st.session_state["_vsync_v5_last"] = raw_sync
         try:
             turn     = json.loads(raw_sync)
-            mhi      = int(turn.get("mhi",0))
-            category = str(turn.get("category",""))
-            u_text   = str(turn.get("user_text",""))
-            a_text   = str(turn.get("assistant_text",""))
+            mhi      = int(turn.get("mhi",     0))
+            category = str(turn.get("category", ""))
+            u_text   = str(turn.get("user_text",      ""))
+            a_text   = str(turn.get("assistant_text",  ""))
             ts       = str(turn.get("ts", datetime.now().isoformat()))
 
             if mhi and category:
@@ -611,57 +825,22 @@ def _render_voice_mode() -> None:
                     "source":    "voice",
                 })
             if u_text:
-                st.session_state.chat_history.append({"role":"user","content":u_text})
+                st.session_state.chat_history.append(
+                    {"role": "user", "content": u_text}
+                )
             if a_text:
                 st.session_state.chat_history.append({
-                    "role":"assistant","content":a_text,
-                    "meta":{"emotion":"voice","mhi":mhi,"category":category},
+                    "role":    "assistant",
+                    "content": a_text,
+                    "meta":    {"mhi": mhi, "category": category},
                 })
-            # Force rerun so dashboard updates immediately
             st.rerun()
         except (json.JSONDecodeError, ValueError):
             pass
 
-    st.markdown("""<div style="text-align:center;margin-bottom:6px;">
-        <span style="font-size:.74rem;color:#3a4a5a;">
-        Press <strong style="color:#63b3ed;">Start</strong> for continuous conversation
-        &nbsp;·&nbsp; Tap the orb to speak once</span></div>""", unsafe_allow_html=True)
-
-    components.html(_build_voice_panel(BACKEND_URL, jwt), height=585, scrolling=False)
-
-    st.markdown("""<div style="text-align:center;margin-top:4px;">
-        <span style="font-size:.60rem;color:#1e2a38;letter-spacing:.05em;">
-        Transcript scrollable above &nbsp;·&nbsp; Switch to 💬 Text to review full history
-        </span></div>""", unsafe_allow_html=True)
-
-
-# ── Main entry ────────────────────────────────────────────────────────────────
-
-def render_chat(voice_enabled: bool = False) -> None:
-    if "chat_history" not in st.session_state: st.session_state.chat_history = []
-    if "mhi_log"      not in st.session_state: st.session_state.mhi_log      = []
-    if "chat_mode"    not in st.session_state: st.session_state.chat_mode    = "text"
-
-    st.markdown(_CSS, unsafe_allow_html=True)
-
-    _, mid, _ = st.columns([1, 2.4, 1])
-    with mid:
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("💬  Text", use_container_width=True, key="btn_text_mode",
-                         type="primary" if st.session_state.chat_mode=="text" else "secondary"):
-                _cancel_speech_js()
-                st.session_state.chat_mode = "text"
-                st.rerun()
-        with c2:
-            if st.button("🎙  Voice", use_container_width=True, key="btn_voice_mode",
-                         type="primary" if st.session_state.chat_mode=="voice" else "secondary"):
-                st.session_state.chat_mode = "voice"
-                st.rerun()
-
-    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
-
-    if st.session_state.chat_mode == "voice":
-        _render_voice_mode()
-    else:
-        _render_text_mode(voice_enabled=voice_enabled)
+    # Render the voice panel
+    components.html(
+        _build_voice_panel(BACKEND_URL, jwt),
+        height=640,
+        scrolling=False,
+    )

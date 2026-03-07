@@ -7,7 +7,7 @@ from backend.database.mongo_client import MongoClient
 from backend.auth.auth_utils import decode_token
 
 
-# -------- Existing Dependency -------- #
+# Existing Dependency 
 
 def get_settings():
     return settings
@@ -17,7 +17,7 @@ def get_db() -> MongoClient:
     return MongoClient()
 
 
-# -------- JWT Security Dependency -------- #
+# JWT Security Dependency 
 
 security = HTTPBearer()
 
