@@ -1,4 +1,4 @@
-🧠** Smart Mental Well-Being Assistant**
+🧠# Smart Mental Well-Being Assistant
 
 An AI-powered mental health support assistant designed to understand emotional signals from user conversations and provide supportive responses while tracking a Mental Health Index (MHI) to monitor well-being trends.
 
