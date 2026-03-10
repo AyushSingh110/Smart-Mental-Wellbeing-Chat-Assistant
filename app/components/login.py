@@ -10,6 +10,7 @@ LOGIN_CSS = """
 html, body, .stApp {
     background: #080c14 !important;
     font-family: 'Sora', -apple-system, sans-serif !important;
+    scroll-behavior: smooth;
 }
 
 #MainMenu, footer, header,
@@ -21,6 +22,12 @@ html, body, .stApp {
     padding-top: 0 !important;
     padding-bottom: 0 !important;
     max-width: 100% !important;
+    animation: authFadeIn 260ms ease-out;
+}
+
+@keyframes authFadeIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
 }
 
 /* Left panel */
@@ -34,6 +41,7 @@ html, body, .stApp {
     justify-content: center;
     position: relative;
     overflow: hidden;
+    transition: border-color 0.2s ease;
 }
 
 .left-panel::before {
@@ -64,6 +72,11 @@ html, body, .stApp {
     align-items: center; justify-content: center;
     margin-bottom: 1.8rem;
     box-shadow: 0 8px 32px rgba(99,179,237,0.25);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.brand-logo:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 12px 36px rgba(99,179,237,0.3);
 }
 
 .brand-title {
@@ -102,13 +115,23 @@ html, body, .stApp {
 }
 
 /* Right panel */
-.right-panel {
+/* Targets the right auth column container without relying on open/close HTML wrappers */
+.main .block-container > div[data-testid="stHorizontalBlock"] > div:nth-child(2) {
+    display: flex;
+    align-items: center;
     min-height: 100vh;
     padding: 0 2rem;
-    background: #080c14;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
+}
+
+.main .block-container > div[data-testid="stHorizontalBlock"] > div:nth-child(2) > div[data-testid="stVerticalBlock"] {
+    max-width: 430px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 1.4rem;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 16px;
+    background: linear-gradient(180deg, rgba(15, 22, 34, 0.9), rgba(10, 16, 26, 0.9));
+    box-shadow: 0 16px 36px rgba(4, 8, 18, 0.35);
 }
 
 .form-heading {
@@ -199,6 +222,10 @@ html, body, .stApp {
     opacity: 0.88 !important;
     box-shadow: 0 6px 28px rgba(99,179,237,0.35) !important;
 }
+.stButton > button[kind="primary"]:focus-visible {
+    outline: none !important;
+    box-shadow: 0 0 0 3px rgba(99,179,237,0.25) !important;
+}
 
 /* Secondary (tab) button */
 .stButton > button[kind="secondary"] {
@@ -217,6 +244,11 @@ html, body, .stApp {
     color: #63b3ed !important;
     background: rgba(99,179,237,0.05) !important;
 }
+.stButton > button[kind="secondary"]:focus-visible {
+    outline: none !important;
+    border-color: rgba(99,179,237,0.45) !important;
+    box-shadow: 0 0 0 3px rgba(99,179,237,0.15) !important;
+}
 
 /* Alert */
 [data-testid="stAlert"] {
@@ -224,6 +256,39 @@ html, body, .stApp {
     font-size: 0.82rem !important;
     font-family: 'Sora', sans-serif !important;
     margin-top: 0.8rem !important;
+}
+
+@media (max-width: 1080px) {
+    .left-panel { padding: 3rem 2rem; }
+    .brand-title { font-size: 1.6rem; }
+}
+
+@media (max-width: 760px) {
+    .left-panel {
+        min-height: auto;
+        padding: 2rem 1.2rem;
+        border-right: none;
+        border-bottom: 1px solid rgba(99,179,237,0.07);
+    }
+    .main .block-container > div[data-testid="stHorizontalBlock"] > div:nth-child(2) {
+        min-height: auto;
+        padding: 1.2rem 0.8rem 1.6rem;
+    }
+    .main .block-container > div[data-testid="stHorizontalBlock"] > div:nth-child(2) > div[data-testid="stVerticalBlock"] {
+        max-width: 100%;
+        padding: 1rem;
+        border-radius: 14px;
+    }
+    .brand-desc { max-width: 100%; margin-bottom: 1.2rem; }
+    .feature-row { margin-bottom: 0.6rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    * {
+        animation: none !important;
+        transition: none !important;
+        scroll-behavior: auto !important;
+    }
 }
 </style>
 """
@@ -277,8 +342,6 @@ def render_login() -> None:
 
     # ── Right form panel ──────────────────────────────────────────────────────
     with right:
-        st.markdown("<div style='height:15vh'></div>", unsafe_allow_html=True)
-
         # Heading
         if st.session_state.auth_tab == "login":
             st.markdown("""

@@ -39,13 +39,17 @@ _CSS = """
     gap: 14px;
     margin-bottom: 22px;
     width: 100%;
+    animation: fadeInDash .26s ease-out;
 }
 @media(max-width: 860px) {
     .stat-grid { grid-template-columns: repeat(2, 1fr); }
 }
+@media(max-width: 560px) {
+    .stat-grid { grid-template-columns: 1fr; grid-auto-rows: 108px; }
+}
 
 .stat-card {
-    background: #111827;
+    background: #101d31;
     border: 1px solid rgba(255,255,255,0.07);
     border-radius: 14px;
     padding: 0 20px;
@@ -55,9 +59,13 @@ _CSS = """
     gap: 4px;
     position: relative;
     overflow: hidden;
-    transition: border-color .2s;
+    transition: border-color .2s, transform .2s, box-shadow .2s;
 }
-.stat-card:hover { border-color: rgba(99,179,237,0.22); }
+.stat-card:hover {
+    border-color: rgba(99,179,237,0.22);
+    transform: translateY(-1px);
+    box-shadow: 0 10px 24px rgba(5, 10, 24, 0.35);
+}
 .stat-card::before {
     content: '';
     position: absolute; top: 0; left: 0; right: 0;
@@ -67,7 +75,7 @@ _CSS = """
 }
 .stat-label {
     font-size: .60rem; font-weight: 600; text-transform: uppercase;
-    letter-spacing: .10em; color: #4a5568;
+    letter-spacing: .10em; color: #8ea0b8;
     font-family: 'Sora', sans-serif;
     white-space: nowrap;
 }
@@ -77,10 +85,10 @@ _CSS = """
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .stat-suffix {
-    font-size: .72rem; font-weight: 400; color: #4a5568;
+    font-size: .72rem; font-weight: 400; color: #8ea0b8;
 }
 .stat-sub {
-    font-size: .64rem; color: #4a5568;
+    font-size: .64rem; color: #8ea0b8;
     font-family: 'Sora', sans-serif;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
@@ -88,7 +96,7 @@ _CSS = """
 /* ── Section label ── */
 .section-lbl {
     font-size: .62rem; font-weight: 600; text-transform: uppercase;
-    letter-spacing: .10em; color: #4a5568;
+    letter-spacing: .10em; color: #8ea0b8;
     margin: 4px 0 10px;
     display: flex; align-items: center; gap: 8px;
 }
@@ -99,28 +107,31 @@ _CSS = """
 
 /* ── Chart wrapper ── */
 .chart-card {
-    background: #111827;
+    background: #101d31;
     border: 1px solid rgba(255,255,255,0.07);
     border-radius: 14px;
     padding: 16px 16px 8px;
+    transition: border-color .2s ease;
 }
+.chart-card:hover { border-color: rgba(99,179,237,0.2); }
 .chart-sub-lbl {
     font-size: .62rem; font-weight: 600; text-transform: uppercase;
-    letter-spacing: .08em; color: #4a5568;
+    letter-spacing: .08em; color: #8ea0b8;
     margin-bottom: 6px;
     font-family: 'Sora', sans-serif;
 }
 
 /* ── Session history table ── */
 .hist-wrap {
-    background: #111827;
+    background: #101d31;
     border: 1px solid rgba(255,255,255,0.07);
     border-radius: 14px;
-    overflow: hidden;
+    overflow-x: auto;
+    overflow-y: hidden;
     margin-top: 4px;
 }
 .hist-table {
-    width: 100%; border-collapse: collapse;
+    width: 100%; min-width: 620px; border-collapse: collapse;
     font-family: 'Sora', sans-serif;
 }
 .hist-table thead tr {
@@ -129,7 +140,7 @@ _CSS = """
 .hist-table thead th {
     text-align: left; padding: 12px 16px;
     font-size: .60rem; font-weight: 600;
-    text-transform: uppercase; letter-spacing: .10em; color: #4a5568;
+    text-transform: uppercase; letter-spacing: .10em; color: #8ea0b8;
 }
 .hist-table tbody tr {
     border-bottom: 1px solid rgba(255,255,255,.04);
@@ -144,7 +155,7 @@ _CSS = """
 }
 .ts-cell {
     font-family: 'JetBrains Mono', monospace;
-    font-size: .70rem; color: #4a5568;
+    font-size: .70rem; color: #8ea0b8;
 }
 .score-cell {
     font-family: 'JetBrains Mono', monospace;
@@ -168,13 +179,13 @@ _CSS = """
 }
 .zone-pill {
     display: flex; align-items: center; gap: 4px;
-    font-size: .60rem; color: #4a5568;
+    font-size: .60rem; color: #8ea0b8;
 }
 .zone-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
 
 /* ── Empty state ── */
 .dash-empty {
-    background: #111827;
+    background: #101d31;
     border: 1px solid rgba(255,255,255,.07);
     border-radius: 14px;
     padding: 3.5rem 2rem; text-align: center;
@@ -186,7 +197,19 @@ _CSS = """
     font-size: 1.4rem; margin-bottom: 1rem;
 }
 .dash-empty-title { font-size: .95rem; font-weight: 600; color: #e8edf5; margin-bottom: .4rem; }
-.dash-empty-sub   { font-size: .80rem; color: #4a5568; line-height: 1.75; max-width: 300px; margin: 0 auto; }
+.dash-empty-sub   { font-size: .80rem; color: #8ea0b8; line-height: 1.75; max-width: 300px; margin: 0 auto; }
+
+@keyframes fadeInDash {
+    from { opacity: 0; transform: translateY(5px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .stat-grid, .stat-card, .chart-card, .turn {
+        animation: none !important;
+        transition: none !important;
+    }
+}
 </style>
 """
 
@@ -242,8 +265,8 @@ def _gauge(mhi: float) -> None:
                 "range": [0, 100],
                 "tickvals": [0, 16, 32, 50, 66, 82, 100],
                 "ticktext": ["0", "16", "32", "50", "66", "82", "100"],
-                "tickcolor": "#2d3748",
-                "tickfont":  {"color": "#3a4a5a", "size": 9, "family": "Sora"},
+                "tickcolor": "#7388a6",
+                "tickfont":  {"color": "#8ea0b8", "size": 9, "family": "Sora"},
                 "linecolor": "rgba(255,255,255,.05)",
             },
             "bar":      {"color": color, "thickness": 0.24},
@@ -259,7 +282,7 @@ def _gauge(mhi: float) -> None:
             ],
             "threshold": {"line": {"color": color, "width": 2}, "thickness": .80, "value": mhi},
         },
-        title={"text": "Latest MHI", "font": {"color": "#4a5568", "size": 11, "family": "Sora"}},
+        title={"text": "Latest MHI", "font": {"color": "#8ea0b8", "size": 11, "family": "Sora"}},
     ))
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
@@ -321,7 +344,7 @@ def _trend_chart(log: list[dict]) -> None:
 
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        font={"family": "Sora", "color": "#4a5568"},
+        font={"family": "Sora", "color": "#8ea0b8"},
         margin=dict(l=4, r=4, t=8, b=4), height=230,
         xaxis=dict(showgrid=False, zeroline=False,
                    tickfont=dict(size=9, family="JetBrains Mono"), tickformat="%H:%M:%S"),
@@ -410,7 +433,7 @@ def render_dashboard() -> None:
             f'<div class="zone-pill">'
             f'<span class="zone-dot" style="background:{c}"></span>'
             f'<span style="color:{c}">{name}</span>'
-            f'<span style="color:#2d3748">&nbsp;{rng}</span>'
+            f'<span style="color:#8ea0b8">&nbsp;{rng}</span>'
             f'</div>'
             for c, name, rng in _ZONES
         )
@@ -450,7 +473,7 @@ def render_dashboard() -> None:
                 f"<tr>"
                 f"<td class='ts-cell'>{ts}</td>"
                 f"<td><span class='score-cell' style='color:{mhi_col}'>{mhi_val}</span>"
-                f"<span style='color:#2d3748;font-family:JetBrains Mono,monospace;font-size:.68rem'> /100</span></td>"
+                f"<span style='color:#8ea0b8;font-family:JetBrains Mono,monospace;font-size:.68rem'> /100</span></td>"
                 f"<td><span class='cat-badge' style='background:{cat_col}14;"
                 f"border:1px solid {cat_col}30;color:{cat_col}'>{cat}</span>{lang_tag}</td>"
                 f"<td><span class='src-badge {src_cls}'>{src_icon}&nbsp;{src_lbl}</span></td>"

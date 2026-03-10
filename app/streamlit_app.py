@@ -2,9 +2,9 @@ import streamlit as st
 
 from components.login import render_login
 from components.sidebar import render_sidebar
-from components.chat_ui  import render_chat        # voice-only, interrupt, multilingual
+from components.chat_ui  import render_chat       
 from components.tools_panel     import render_tools
-from components.dashboard import render_dashboard   # equal cards, live MHI
+from components.dashboard import render_dashboard   
 from styles import GLOBAL_CSS
 
 st.set_page_config(
@@ -14,7 +14,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── Auth gate ─────────────────────────────────────────────────────────────────
+# Auth gate
 if "jwt" not in st.session_state:
     render_login()
     st.stop()
@@ -31,20 +31,23 @@ voice_enabled = render_sidebar()
 
 st.markdown("""
 <div class="app-header">
-    <div class="app-header-icon">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white"
-             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06
-                     a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78
-                     1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
-        </svg>
+    <div class="app-header-main">
+        <div class="app-header-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06
+                         a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78
+                         1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+            </svg>
+        </div>
+        <div>
+            <div class="app-header-title">Smart Mental Well-Being Assistant</div>
+            <div class="app-header-sub">Voice-first check-ins with emotion insights, MHI tracking, and CBT-aligned support</div>
+        </div>
     </div>
-    <div>
-        <div class="app-header-title">Smart Mental Well-Being Assistant</div>
-        <div class="app-header-sub">Emotion Detection · Mental Health Index · CBT Support</div>
-    </div>
+    <div class="app-header-chip">Session Entries: %d</div>
 </div>
-""", unsafe_allow_html=True)
+""" % len(st.session_state.mhi_log), unsafe_allow_html=True)
 
 mhi_count = len(st.session_state.mhi_log)
 dashboard_label = f"Dashboard ({mhi_count})" if mhi_count else "Dashboard"

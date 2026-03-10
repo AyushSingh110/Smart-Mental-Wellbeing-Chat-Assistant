@@ -33,9 +33,9 @@ def render_sidebar() -> bool:
         score = 75
         color = "#48bb78" if score >= 70 else "#ed8936" if score >= 40 else "#fc8181"
         st.markdown(f"""
-        <div style="background:#1a2035; border:1px solid rgba(255,255,255,0.07); border-radius:12px; padding:14px 16px; margin-bottom:8px;">
+        <div class="sidebar-score-card">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                <span style="font-size:0.75rem; color:#8b9ab0;">Weekly Stability</span>
+                <span style="font-size:0.75rem; color:#a8b7cc;">Weekly Stability</span>
                 <span style="font-size:0.9rem; font-weight:600; color:{color};">{score}%</span>
             </div>
             <div style="height:4px; background:rgba(255,255,255,0.06); border-radius:2px; overflow:hidden;">
@@ -45,10 +45,9 @@ def render_sidebar() -> bool:
         """, unsafe_allow_html=True)
 
         st.markdown("""
-        <div style="margin-top:auto; padding-top:1.5rem; border-top:1px solid rgba(255,255,255,0.07); margin-top:2rem;">
-            <div style="font-size:0.7rem; color:#546070; line-height:1.6;">
-                This tool is not a substitute for professional mental health care. If you are in crisis, contact emergency services.
-            </div>
+        <div class="sidebar-disclaimer">
+            This tool is not a substitute for professional mental health care.
+            If you are in immediate danger or crisis, contact local emergency services.
         </div>
         """, unsafe_allow_html=True)
 

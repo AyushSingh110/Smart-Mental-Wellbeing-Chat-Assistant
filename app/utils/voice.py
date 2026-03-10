@@ -5,7 +5,7 @@ import json
 import streamlit as st
 import streamlit.components.v1 as components
 
-# ── Emotion-aware Web Speech synthesis profiles ───────────────────────────────
+#Emotion-aware Web Speech synthesis profiles 
 _WEB_SPEECH_PROFILES: dict[str, dict] = {
     "crisis":  {"rate": 0.76, "pitch": 0.94, "volume": 1.0},
     "sadness": {"rate": 0.82, "pitch": 0.97, "volume": 0.95},
@@ -22,13 +22,6 @@ _PREFERRED_VOICES = json.dumps([
     "Samantha", "Karen", "Moira", "Tessa", "Victoria",
     "Google US English",
 ])
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Full voice-to-voice component
-# Self-contained iframe: records → transcribes → chats → speaks
-# Passes conversation up to Streamlit via postMessage when a round-trip completes
-# ─────────────────────────────────────────────────────────────────────────────
 
 def _build_voice_component_html(
     backend_url: str,

@@ -1,32 +1,35 @@
+from __future__ import annotations
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from bson import ObjectId
 
 from backend.config import settings
-from backend.database.mongo_client import MongoClient
+from backend.database.mongo_client import Database, db
 from backend.auth.auth_utils import decode_token
 
 
-# Existing Dependency 
+# -- Settings dependency -------------------------------------------------------
 
 def get_settings():
     return settings
 
 
-def get_db() -> MongoClient:
-    return MongoClient()
+# -- Database dependency (returns the module-level singleton) -------------------
+
+def get_db() -> Database:
+    return db
 
 
-# JWT Security Dependency 
+# -- JWT Security --------------------------------------------------------------
 
 security = HTTPBearer()
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security)
-):
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+) -> ObjectId:
     token = credentials.credentials
-
     payload = decode_token(token)
     user_id = payload.get("sub")
 

@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from bson import ObjectId
 
-from backend.database.mongo_client import MongoClient
+from backend.database.mongo_client import Database
 from backend.dependencies import get_db, get_current_user
 from backend.services.report_service import ReportService
-from backend.services.history_service import HistoryService
 from backend.services.llm_service import generate_llm_response
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/report", tags=["Report"])
 report_service = ReportService()
@@ -17,7 +20,7 @@ report_service = ReportService()
 @router.get("/", summary="Generate and download session PDF report")
 async def generate_report(
     user_id: ObjectId = Depends(get_current_user),
-    db: MongoClient   = Depends(get_db),
+    db: Database      = Depends(get_db),
 ):
     conversations = await db.get_recent_conversations(user_id, limit=50)
 

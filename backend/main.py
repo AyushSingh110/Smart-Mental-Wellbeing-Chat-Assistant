@@ -9,12 +9,17 @@ from functools import partial
 from fastapi import FastAPI, Query, Depends, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
-from pydantic import BaseModel
-from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
 
 from backend.auth.auth_router import router as auth_router
 from backend.config import settings
+from backend.database.mongo_client import db
+from backend.database.schemas import (
+    ChatRequest,
+    ChatResponse,
+    AssessmentRequest,
+    SpeakRequest,
+)
 from backend.dependencies import get_current_user
 from backend.routes.routes_report import router as report_router
 
@@ -30,7 +35,7 @@ from backend.services.history_service import HistoryService
 from backend.services.multilingual_voice_service import MultilingualVoiceService
 
 
-# ── Logging ───────────────────────────────────────────────────────────────────
+# -- Logging -------------------------------------------------------------------
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -39,19 +44,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# ── MongoDB ───────────────────────────────────────────────────────────────────
-
-mongo = AsyncIOMotorClient(
-    settings.MONGO_URI,
-    tls=True,
-    serverSelectionTimeoutMS=5000,
-)
-db                = mongo[settings.MONGO_DB_NAME]
-conversations_col = db["conversations"]
-users_col         = db["users"]
-
-
-# ── Services  (instantiated once at startup, reused for every request) ────────
+# -- Services (instantiated once at startup, reused for every request) ---------
 
 emotion_service    = EmotionService()
 crisis_service     = CrisisService()
@@ -61,53 +54,22 @@ rag_service        = RAGService()
 safety_service     = SafetyService()
 behavioral_service = BehavioralService()
 screening_service  = ScreeningService()
-history_service    = HistoryService(conversations_col)
+history_service    = HistoryService(db.conversations)
 voice_service      = MultilingualVoiceService()
 
 
-# ── Pydantic schemas ──────────────────────────────────────────────────────────
-
-class ChatRequest(BaseModel):
-    message: str
-    language_code: str = "en"    # ISO 639-1 — detected by Whisper, forwarded from frontend
-
-
-class ChatResponse(BaseModel):
-    response: str
-    emotion_scores: dict
-    crisis_score: float
-    crisis_tier: str          # 'active' | 'passive' | 'distress' | 'none'
-    intent: str
-    mhi: int
-    category: str
-
-
-class AssessmentRequest(BaseModel):
-    phq2: int
-    gad2: int
-
-
-class SpeakRequest(BaseModel):
-    text: str
-    emotion_label: str = "default"
-    crisis_tier: str   = "none"
-    language_code: str = "en"    # ISO 639-1 — used by MultilingualVoiceService
-
-
-# ── Lifespan ──────────────────────────────────────────────────────────────────
+# -- Lifespan ------------------------------------------------------------------
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting %s v%s …", settings.APP_NAME, settings.APP_VERSION)
-    await conversations_col.create_index([("user_id", 1), ("timestamp", -1)])
-    await users_col.create_index("email", unique=True)
-    logger.info("MongoDB connected — database: %s", settings.MONGO_DB_NAME)
+    await db.create_indexes()
     yield
-    mongo.close()
+    db.close()
     logger.info("Shutdown complete.")
 
 
-# ── App ───────────────────────────────────────────────────────────────────────
+# -- App -----------------------------------------------------------------------
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -119,19 +81,38 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.include_router(report_router)
-app.include_router(auth_router)
+# Collect every origin the frontend might send
+_ALLOWED_ORIGINS = [
+    "http://localhost:8501",
+    "http://127.0.0.1:8501",
+    settings.FRONTEND_URL,
+    "null",
+]
 
-app.add_middleware(
+app.add_middleware(                    
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_ALLOWED_ORIGINS,
+    allow_origin_regex=r"http://localhost:\d+", 
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "Accept",
+        "Origin",
+        "X-Requested-With",
+    ],
+    expose_headers=["Content-Disposition"],  
+    max_age=600,   
 )
 
 
-# ── Thread-pool helper ────────────────────────────────────────────────────────
+# Routers — registered AFTER middleware
+app.include_router(auth_router)
+app.include_router(report_router)
+
+
+# Thread-pool helper
 
 async def _run_in_thread(fn, *args, **kwargs):
     """
@@ -142,7 +123,7 @@ async def _run_in_thread(fn, *args, **kwargs):
     return await loop.run_in_executor(None, partial(fn, *args, **kwargs))
 
 
-# ── DB persistence helper ─────────────────────────────────────────────────────
+# DB persistence helper 
 
 async def _persist(
     user_id,
@@ -158,7 +139,7 @@ async def _persist(
     category: str,
 ) -> None:
     """Saves one conversation turn to MongoDB. Used by all /chat exit paths."""
-    await conversations_col.insert_one({
+    await db.conversations.insert_one({
         "user_id":          user_id,
         "timestamp":        datetime.utcnow(),
         "message":          message,
@@ -174,10 +155,8 @@ async def _persist(
     })
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Routes
-# ─────────────────────────────────────────────────────────────────────────────
 
+# Routes
 @app.get("/", summary="API info")
 def root():
     return {
@@ -196,22 +175,65 @@ def root():
     }
 
 
-# ── POST /chat ────────────────────────────────────────────────────────────────
+
+@app.options("/voice/transcribe", include_in_schema=False)
+async def options_voice_transcribe():
+    """
+    Explicit OPTIONS handler for the STT endpoint.
+    The CORSMiddleware already handles this, but having an explicit
+    handler ensures a clean 200 and eliminates any router-level 405.
+    """
+    return Response(
+        status_code=200,
+        headers={
+            "Allow": "POST, OPTIONS",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Authorization, Content-Type",
+        },
+    )
+
+
+@app.options("/voice/speak", include_in_schema=False)
+async def options_voice_speak():
+    """Explicit OPTIONS handler for the TTS endpoint."""
+    return Response(
+        status_code=200,
+        headers={
+            "Allow": "POST, OPTIONS",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Authorization, Content-Type",
+        },
+    )
+
+
+@app.options("/chat", include_in_schema=False)
+async def options_chat():
+    """Explicit OPTIONS handler for the chat endpoint."""
+    return Response(
+        status_code=200,
+        headers={
+            "Allow": "POST, OPTIONS",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Authorization, Content-Type",
+        },
+    )
+
+
+#  POST /chat 
 
 @app.post("/chat", response_model=ChatResponse, summary="Full chat pipeline")
 async def chat(
     body: ChatRequest,
     user_id: ObjectId = Depends(get_current_user),
 ):
-    # ── Step 1: ML inference — all heavy calls offloaded to thread pool ───────
+    # Step 1: ML inference — offloaded to thread pool
     emotion_scores   = await _run_in_thread(emotion_service.predict, body.message)
     emotion_label    = max(emotion_scores, key=emotion_scores.get)
     emotion_score    = emotion_scores[emotion_label]
 
-    # crisis_score  = float probability  (0.0 – 1.0)
-    # crisis_tier   = semantic label     ('active' | 'passive' | 'distress' | 'none')
-    # classify_tier now also uses the fine-tuned model (not just regex),
-    # so it is awaited in the thread pool like predict().
     crisis_score     = await _run_in_thread(crisis_service.predict,       body.message)
     crisis_tier      = await _run_in_thread(crisis_service.classify_tier, body.message)
 
@@ -224,10 +246,10 @@ async def chat(
         crisis_score, crisis_tier, behavioral_score,
     )
 
-    # ── Step 2: Async DB-dependent scoring ───────────────────────────────────
+    # Step 2: Async DB-dependent scoring
     history_score = await history_service.compute(user_id)
 
-    user_doc = await users_col.find_one(
+    user_doc = await db.users.find_one(
         {"_id": user_id},
         {"phq2_total": 1, "gad2_total": 1},
     )
@@ -235,10 +257,7 @@ async def chat(
     gad2 = int(user_doc.get("gad2_total", 0)) if user_doc else 0
     screening_score = screening_service.compute(phq2, gad2)
 
-    # ── Step 3: MHI ──────────────────────────────────────────────────────────
-    # raw_text is now passed so matrix_service can apply the
-    # hopeless-language penalty (e.g. "disappeared", "nobody cares").
-    # Hard ceilings:  active → 20,  passive → 35,  distress → 58
+    # Step 3: Compute MHI (includes hopeless-phrase penalty + crisis ceilings)
     mhi = matrix_service.compute(
         emotion_score    = emotion_score,
         crisis_score     = crisis_score,
@@ -247,7 +266,7 @@ async def chat(
         behavioral_score = behavioral_score,
         history_score    = history_score,
         crisis_tier      = crisis_tier,
-        raw_text         = body.message,   # ← NEW: hopeless-phrase penalty
+        raw_text         = body.message,
     )
     category = matrix_service.categorize(mhi, crisis_score, crisis_tier)
 
@@ -256,9 +275,7 @@ async def chat(
         mhi, category, screening_score, history_score,
     )
 
-    # ── Step 4: Crisis early-exit — skip RAG for active / passive ─────────────
-    # The LLM is never called for high-risk tiers.
-    # safety_service returns a predefined, helpline-inclusive template.
+    # Step 4: Crisis early-exit — skip RAG for active/passive tiers
     if safety_service.is_active_crisis(
         crisis_tier, crisis_score, settings.SAFETY_OVERRIDE_THRESHOLD
     ):
@@ -307,12 +324,7 @@ async def chat(
             intent=intent, mhi=int(mhi), category=category,
         )
 
-    # ── Step 5: RAG response ──────────────────────────────────────────────────
-    # category is already known here so the prompt gets the correct
-    # sentence-length instruction for this risk level.
-    # language_code carries the Whisper-detected language so the LLM
-    # replies in Hindi / Bengali / Tamil etc. when the user spoke that language.
-    # generate_response() now returns (text, llm_failed_bool).
+    # Step 5: RAG-augmented LLM response
     llm_response, llm_failed = await _run_in_thread(
         rag_service.generate_response,
         body.message,
@@ -322,22 +334,20 @@ async def chat(
         mhi,
         crisis_score,
         crisis_tier,
-        category,           # ← length-aware prompt
-        body.language_code, # ← NEW: respond in user's language
+        category,
+        body.language_code,
     )
 
-    # ── Step 6: Safety validation + length trim ───────────────────────────────
-    # category drives the sentence-limit trim.
-    # llm_failed=True triggers a warm safe fallback instead of an error.
+    # Step 6: Safety validation + length trim
     final_response = safety_service.validate_response(
         response     = llm_response,
         crisis_score = crisis_score,
         crisis_tier  = crisis_tier,
-        category     = category,     # ← NEW: sentence-limit trim
-        llm_failed   = llm_failed,   # ← NEW: safe fallback on LLM failure
+        category     = category,
+        llm_failed   = llm_failed,
     )
 
-    # ── Step 7: Persist to MongoDB ────────────────────────────────────────────
+    # Step 7: Persist to MongoDB
     await _persist(
         user_id, body.message, emotion_scores, crisis_score, crisis_tier,
         behavioral_score, screening_score, history_score, intent, mhi, category,
@@ -354,7 +364,7 @@ async def chat(
     )
 
 
-# ── POST /voice/transcribe ────────────────────────────────────────────────────
+# -- POST /voice/transcribe ----------------------------------------------------
 
 @app.post("/voice/transcribe", summary="Multilingual STT — audio + language detection")
 async def voice_transcribe(
@@ -404,7 +414,7 @@ async def voice_transcribe(
     }
 
 
-# ── POST /voice/speak ─────────────────────────────────────────────────────────
+# -- POST /voice/speak ---------------------------------------------------------
 
 @app.post("/voice/speak", summary="Multilingual TTS — text to speech with Indian accent")
 async def voice_speak(
@@ -428,7 +438,7 @@ async def voice_speak(
         audio_bytes = await _run_in_thread(
             voice_service.synthesize,
             body.text,
-            body.language_code,    # ← language code so gTTS picks right voice
+            body.language_code,
             body.emotion_label,
             body.crisis_tier,
         )
@@ -446,7 +456,7 @@ async def voice_speak(
     )
 
 
-# ── POST /assessment ──────────────────────────────────────────────────────────
+#  POST /assessment 
 
 @app.post("/assessment", summary="Submit PHQ-2 / GAD-2 screening scores")
 async def submit_assessment(
@@ -456,7 +466,7 @@ async def submit_assessment(
     phq2 = max(0, min(body.phq2, 6))
     gad2 = max(0, min(body.gad2, 6))
 
-    await users_col.update_one(
+    await db.users.update_one(
         {"_id": user_id},
         {
             "$set": {
@@ -480,7 +490,7 @@ async def submit_assessment(
     }
 
 
-# ── GET /user/history ─────────────────────────────────────────────────────────
+#  GET /user/history 
 
 @app.get("/user/history", summary="Paginated conversation history")
 async def user_history(
@@ -488,7 +498,7 @@ async def user_history(
     user_id: ObjectId = Depends(get_current_user),
 ):
     cursor = (
-        conversations_col
+        db.conversations
         .find({"user_id": user_id})
         .sort("timestamp", 1)
         .limit(limit)
@@ -499,7 +509,7 @@ async def user_history(
     return {"count": len(docs), "conversations": docs}
 
 
-# ── GET /user/timeline ────────────────────────────────────────────────────────
+#  GET /user/timeline
 
 @app.get("/user/timeline", summary="MHI timeline for dashboard chart")
 async def user_timeline(
@@ -507,7 +517,7 @@ async def user_timeline(
     user_id: ObjectId = Depends(get_current_user),
 ):
     cursor = (
-        conversations_col
+        db.conversations
         .find(
             {"user_id": user_id},
             {"timestamp": 1, "mhi": 1, "category": 1, "crisis_tier": 1, "_id": 0},

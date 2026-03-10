@@ -133,7 +133,7 @@ def _build_voice_panel(backend_url: str, jwt: str) -> str:
 html,body{{
     font-family:'Sora',sans-serif;
     background:radial-gradient(ellipse at 50% 0%, #0c1829 0%, #060c18 68%);
-    color:#e8edf5;width:100%;min-height:100vh;overflow-x:hidden;
+    color:#e8edf5;width:100%;min-height:100vh;overflow-x:hidden;scroll-behavior:smooth;
 }}
 
 /* ── Orb ── */
@@ -192,7 +192,7 @@ html,body{{
 
 /* Status text */
 .orb-status{{
-    font-size:.66rem;color:#4a5568;letter-spacing:.10em;
+    font-size:.66rem;color:#8fa2bc;letter-spacing:.10em;
     text-transform:uppercase;min-height:18px;text-align:center;
     transition:color .3s;
 }}
@@ -217,9 +217,10 @@ html,body{{
 .ctrl-btn{{
     flex:1;padding:10px 0;border:none;border-radius:11px;
     font-family:'Sora',sans-serif;font-size:.71rem;font-weight:600;
-    letter-spacing:.04em;cursor:pointer;transition:opacity .15s,transform .12s;
+    letter-spacing:.04em;cursor:pointer;transition:opacity .15s,transform .12s,box-shadow .2s;
 }}
 .ctrl-btn:hover{{opacity:.80;}} .ctrl-btn:active{{transform:scale(.97);}}
+.ctrl-btn:focus-visible{{outline:none;box-shadow:0 0 0 3px rgba(99,179,237,.25);}}
 .btn-start{{background:linear-gradient(135deg,#2a6496,#1a7a6e);color:#d6f0ff;}}
 .btn-stop {{background:rgba(252,129,129,.14);color:#fc8181;border:1px solid rgba(252,129,129,.28);}}
 .btn-mute {{background:rgba(255,255,255,.05);color:#718096;border:1px solid rgba(255,255,255,.08);}}
@@ -237,9 +238,11 @@ html,body{{
 .transcript{{
     margin:0 14px 10px;
     border:1px solid rgba(255,255,255,.06);border-radius:16px;
-    background:rgba(6,12,24,.65);backdrop-filter:blur(10px);
+    background:rgba(10,19,34,.74);backdrop-filter:blur(10px);
     overflow-y:auto;max-height:290px;padding:12px;scroll-behavior:smooth;
+    transition:border-color .2s ease, box-shadow .2s ease;
 }}
+.transcript:hover{{border-color:rgba(99,179,237,.2);box-shadow:inset 0 0 0 1px rgba(255,255,255,.03);}}
 .transcript::-webkit-scrollbar{{width:3px;}}
 .transcript::-webkit-scrollbar-thumb{{background:rgba(255,255,255,.08);border-radius:2px;}}
 
@@ -259,7 +262,7 @@ html,body{{
               border-radius:4px 14px 14px 14px;color:#c8d4e6;}}
 .bubble-user{{background:rgba(28,52,90,.88);border:1px solid rgba(99,179,237,.16);
               border-radius:14px 4px 14px 14px;color:#bdd4f0;}}
-.turn-meta{{font-size:.58rem;color:#2d3748;margin-top:4px;display:flex;align-items:center;gap:5px;}}
+.turn-meta{{font-size:.58rem;color:#8fa2bc;margin-top:4px;display:flex;align-items:center;gap:5px;}}
 .turn-row.user-row .turn-meta{{justify-content:flex-end;}}
 .meta-dot{{width:4px;height:4px;border-radius:50%;}}
 .lang-tag{{
@@ -269,8 +272,21 @@ html,body{{
 
 /* Footer hint */
 .panel-hint{{
-    text-align:center;font-size:.62rem;color:#1e2a38;
+    text-align:center;font-size:.62rem;color:#8fa2bc;
     letter-spacing:.06em;padding-bottom:12px;
+}}
+
+@media (max-width: 560px) {{
+    .orb{{width:92px;height:92px;}}
+    .controls{{flex-direction:column;padding:0 14px 10px;gap:8px;}}
+    .ctrl-btn{{padding:9px 0;font-size:.68rem;}}
+    .transcript{{max-height:250px;margin:0 10px 10px;padding:10px;}}
+    .bubble{{max-width:88%;font-size:.75rem;}}
+    .panel-hint{{padding:0 10px 10px;line-height:1.5;}}
+}}
+
+@media (prefers-reduced-motion: reduce) {{
+    *{{animation:none !important;transition:none !important;scroll-behavior:auto !important;}}
 }}
 
 @keyframes fadeUp{{from{{opacity:0;transform:translateY(5px);}}to{{opacity:1;transform:translateY(0);}}}}
@@ -366,7 +382,7 @@ function appendTurn(role, text, meta) {{
     const isUser = (role === 'user');
     const div    = document.createElement('div');
     div.className = 'turn';
-    const catColor  = (meta && meta.catColor) ? meta.catColor : '#4a5568';
+    const catColor  = (meta && meta.catColor) ? meta.catColor : '#8fa2bc';
     const langTag   = (meta && meta.langName && meta.langName !== 'English')
         ? `<span class="lang-tag">${{esc(meta.langName)}}</span>` : '';
     const metaHtml  = meta
@@ -591,7 +607,7 @@ async function sendChat(userText) {{
         appendTurn('assistant', reply, {{
             mhi:      mhi,
             category: category,
-            catColor: CAT_COLORS[category] || '#4a5568',
+            catColor: CAT_COLORS[category] || '#8fa2bc',
             langName: sessionLangName,
         }});
         syncDashboard(userText, reply, mhi, category, tier, sessionLang);

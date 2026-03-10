@@ -13,10 +13,7 @@ def _get_headers():
         "Authorization": f"Bearer {st.session_state.jwt}"
     }
 
-
-# -----------------------------
 # Chat
-# -----------------------------
 def send_chat(message: str) -> dict:
     headers = {
         "Authorization": f"Bearer {st.session_state.jwt}"
@@ -32,10 +29,7 @@ def send_chat(message: str) -> dict:
     response.raise_for_status()
     return response.json()
 
-
-# -----------------------------
 # Assessment
-# -----------------------------
 def submit_assessment(phq2: int, gad2: int):
     payload = {
         "phq2": phq2,
@@ -51,10 +45,7 @@ def submit_assessment(phq2: int, gad2: int):
 
     response.raise_for_status()
 
-
-# -----------------------------
 # PDF Report
-# -----------------------------
 def get_report():
     response = requests.get(
         f"{BACKEND_URL}/report",
@@ -65,10 +56,7 @@ def get_report():
     response.raise_for_status()
     return response.content
 
-
-# -----------------------------
 # Timeline
-# -----------------------------
 def get_timeline():
     response = requests.get(
         f"{BACKEND_URL}/user/timeline",

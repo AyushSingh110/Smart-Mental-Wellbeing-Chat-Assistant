@@ -25,8 +25,9 @@ _TOOLS = {
 
 def render_tools():
     st.markdown("""
-    <div style="margin: 2rem 0 1rem 0;">
-        <div style="font-size:0.68rem; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:#546070; margin-bottom:0.8rem;">Self-Help Tools</div>
+    <div class="tool-head">
+        <div class="tool-title">Self-Help Tools</div>
+        <div class="tool-hint">Choose one guided exercise to open details</div>
     </div>
     """, unsafe_allow_html=True)
 
