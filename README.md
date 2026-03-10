@@ -1,4 +1,4 @@
-🧠** Smart Mental Well-Being Assistant**
+# Smart Mental Well-Being Assistant
 
 A full-stack mental health support system combining clinical screening tools, real-time emotion and crisis detection, CBT-guided AI responses, multilingual voice interaction, and an MHI (Mental Health Index) tracking dashboard. Built for the Indian context with support for 14 languages.
 
