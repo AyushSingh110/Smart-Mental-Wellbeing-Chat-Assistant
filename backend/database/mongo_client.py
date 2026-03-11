@@ -22,8 +22,8 @@ class Database:
         # for local mongodb:// URIs, TLS is off by default.
         self.client = AsyncIOMotorClient(
             settings.MONGO_URI,
-            serverSelectionTimeoutMS=5000,
-            connectTimeoutMS=5000,
+            serverSelectionTimeoutMS=15000,
+            connectTimeoutMS=10000,
             maxPoolSize=10,
         )
         self.db = self.client[settings.MONGO_DB_NAME]
@@ -35,9 +35,12 @@ class Database:
 
     async def create_indexes(self) -> None:
         """Create required indexes (idempotent — safe to call on every startup)."""
-        await self.conversations.create_index([("user_id", 1), ("timestamp", -1)])
-        await self.users.create_index("email", unique=True)
-        logger.info("Database indexes ensured — database: %s", settings.MONGO_DB_NAME)
+        try:
+            await self.conversations.create_index([("user_id", 1), ("timestamp", -1)])
+            await self.users.create_index("email", unique=True)
+            logger.info("Database indexes ensured — database: %s", settings.MONGO_DB_NAME)
+        except Exception as exc:
+            logger.warning("Could not ensure indexes (DB may be temporarily unavailable): %s", exc)
 
     def close(self) -> None:
         self.client.close()

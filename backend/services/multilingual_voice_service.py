@@ -180,9 +180,11 @@ class MultilingualVoiceService:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def transcribe(self, audio_bytes: bytes, fmt: str = "webm") -> TranscriptionResult:
+    def transcribe(self, audio_bytes: bytes, fmt: str = "webm", language: str | None = None) -> TranscriptionResult:
         """
         Single Whisper pass: detects language AND transcribes simultaneously.
+        If *language* is provided (e.g. "hi"), Whisper is forced to that language
+        instead of auto-detecting, which prevents mis-detection.
         Returns TranscriptionResult. Never raises — returns empty result on error.
         """
         if len(audio_bytes) < _MIN_BYTES:
@@ -197,10 +199,12 @@ class MultilingualVoiceService:
                 tmp.write(audio_bytes)
                 tmp_path = tmp.name
 
-            # language=None is the key — tells Whisper to auto-detect
+            # If a language hint was provided, force Whisper to that language;
+            # otherwise auto-detect (language=None).
+            whisper_lang = language if language and language in _LANG_META else None
             segments, info = self._model.transcribe(
                 tmp_path,
-                language=None,
+                language=whisper_lang,
                 vad_filter=True,
                 vad_parameters={"min_silence_duration_ms": 300},
                 beam_size=5,

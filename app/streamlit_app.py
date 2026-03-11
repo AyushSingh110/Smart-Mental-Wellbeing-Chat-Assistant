@@ -1,6 +1,6 @@
 import streamlit as st
 
-from components.login import render_login
+from components.login import render_login, render_language_selection
 from components.sidebar import render_sidebar
 from components.chat_ui  import render_chat       
 from components.tools_panel     import render_tools
@@ -17,6 +17,11 @@ st.set_page_config(
 # Auth gate
 if "jwt" not in st.session_state:
     render_login()
+    st.stop()
+
+# Language selection gate
+if "selected_language" not in st.session_state:
+    render_language_selection()
     st.stop()
 
 # ── Main app ──────────────────────────────────────────────────────────────────

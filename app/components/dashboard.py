@@ -361,12 +361,30 @@ def _trend_chart(log: list[dict]) -> None:
 
 def render_dashboard() -> None:
     """
-    Reads st.session_state.mhi_log (written by chat_ui_final.py on every voice turn).
-    All dashboard data comes from the live session — no separate DB call required.
+    Shows session MHI data. Fetches from backend API for reliability,
+    falls back to session state cache.
     """
     st.markdown(_CSS, unsafe_allow_html=True)
 
+    # Always try to refresh from backend API (most reliable source)
     log = st.session_state.get("mhi_log", [])
+    try:
+        from utils.api import get_timeline
+        api_data = get_timeline()
+        if api_data:
+            log = [
+                {
+                    "timestamp": entry.get("timestamp", ""),
+                    "mhi":       entry.get("mhi", 0),
+                    "category":  entry.get("category", ""),
+                    "source":    "voice",
+                    "language_code": entry.get("language_code", "en"),
+                }
+                for entry in api_data
+            ]
+            st.session_state.mhi_log = log
+    except Exception:
+        pass
 
     # ── Empty state ───────────────────────────────────────────────────────────
     if not log:

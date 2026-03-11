@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from functools import partial
 
-from fastapi import FastAPI, Query, Depends, UploadFile, File, HTTPException
+from fastapi import FastAPI, Query, Depends, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from bson import ObjectId
@@ -63,7 +63,10 @@ voice_service      = MultilingualVoiceService()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting %s v%s …", settings.APP_NAME, settings.APP_VERSION)
-    await db.create_indexes()
+    try:
+        await db.create_indexes()
+    except Exception as exc:
+        logger.warning("Non-fatal: could not create DB indexes at startup: %s", exc)
     yield
     db.close()
     logger.info("Shutdown complete.")
@@ -369,6 +372,7 @@ async def chat(
 @app.post("/voice/transcribe", summary="Multilingual STT — audio + language detection")
 async def voice_transcribe(
     audio: UploadFile = File(...),
+    language: str | None = Form(None),
     user_id: ObjectId = Depends(get_current_user),
 ):
     """
@@ -398,7 +402,7 @@ async def voice_transcribe(
     logger.debug("STT | %d bytes | fmt=%s | user=%s", len(audio_bytes), fmt, user_id)
 
     try:
-        result = await _run_in_thread(voice_service.transcribe, audio_bytes, fmt)
+        result = await _run_in_thread(voice_service.transcribe, audio_bytes, fmt, language)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
 

@@ -79,40 +79,85 @@ div[data-testid="stTextInput"]:has(input[aria-label="__vsync_v5__"]) * {
 
 # ── postMessage listener injected into the main Streamlit page ────────────────
 # Runs at top-level (NOT inside an iframe) so it can access parent DOM.
-_LISTENER_SCRIPT = """
+# ── Sync bridge — runs in a hidden components.html() iframe ───────────────────
+# Accesses parent document (same-origin srcdoc) to relay postMessage data
+# into the hidden Streamlit text_input, triggering st.rerun().
+_SYNC_BRIDGE = """
 <script>
 (function(){
-    if(window.__vSyncV5) return;
-    window.__vSyncV5 = true;
-    window.addEventListener('message', function(ev){
-        if(!ev.data || ev.data.type !== 'VOICE_TURN_V5') return;
-        try {
-            var payload = JSON.stringify(ev.data);
-            var inputs  = document.querySelectorAll('input[type="text"]');
-            for(var i=0; i<inputs.length; i++){
-                if(inputs[i].getAttribute('aria-label') === '__vsync_v5__'){
-                    var setter = Object.getOwnPropertyDescriptor(
-                        window.HTMLInputElement.prototype, 'value').set;
-                    setter.call(inputs[i], payload);
-                    inputs[i].dispatchEvent(new Event('input',  {bubbles:true}));
-                    inputs[i].dispatchEvent(new Event('change', {bubbles:true}));
-                    break;
-                }
+    if(window.__vSyncBridgeV5) return;
+    window.__vSyncBridgeV5 = true;
+    try {
+        var pdoc = window.parent.document;
+        function findInput(){
+            var inputs = pdoc.querySelectorAll('input[type="text"]');
+            for(var i=0;i<inputs.length;i++){
+                var id = inputs[i].id;
+                if(!id) continue;
+                var lbl = pdoc.querySelector('label[for="'+id+'"]');
+                if(lbl && lbl.textContent.indexOf('__vsync_v5_label__') !== -1)
+                    return inputs[i];
             }
-        } catch(e){ console.debug('vsync-v5 error', e); }
-    });
+            return null;
+        }
+        window.parent.addEventListener('message', function(ev){
+            if(!ev.data || ev.data.type !== 'VOICE_TURN_V5') return;
+            try {
+                var inp = findInput();
+                if(!inp) return;
+                var payload = JSON.stringify(ev.data);
+                var setter = Object.getOwnPropertyDescriptor(
+                    window.HTMLInputElement.prototype, 'value').set;
+                setter.call(inp, payload);
+                inp.dispatchEvent(new Event('input',  {bubbles:true}));
+                inp.dispatchEvent(new Event('change', {bubbles:true}));
+            } catch(e){}
+        });
+    } catch(e){}
 })();
 </script>
 """
 
 
-def _build_voice_panel(backend_url: str, jwt: str) -> str:
+# ── Language names ────────────────────────────────────────────────────────────
+_LANG_NAMES = {
+    "hi": "Hindi", "bn": "Bengali", "ta": "Tamil", "te": "Telugu",
+    "mr": "Marathi", "gu": "Gujarati", "pa": "Punjabi", "kn": "Kannada",
+    "ml": "Malayalam", "ur": "Urdu", "or": "Odia", "as": "Assamese",
+    "ne": "Nepali", "sa": "Sanskrit", "en": "English",
+}
+
+# ── Greetings per language ────────────────────────────────────────────────────
+_GREETINGS = {
+    "en": "Hey, really glad you\u2019re here. This is your space \u2014 completely private and just for you. You can talk to me about anything. How are you doing today?",
+    "hi": "\u0939\u0948\u0932\u094b, \u092e\u0941\u091d\u0947 \u092c\u0939\u0941\u0924 \u0916\u0941\u0936\u0940 \u0939\u0948 \u0915\u093f \u0906\u092a \u092f\u0939\u093e\u0901 \u0939\u0948\u0902\u0964 \u092f\u0939 \u0906\u092a\u0915\u0940 \u0905\u092a\u0928\u0940 \u091c\u0917\u0939 \u0939\u0948 \u2014 \u092a\u0942\u0930\u0940 \u0924\u0930\u0939 \u0938\u0947 \u0928\u093f\u091c\u0940\u0964 \u0906\u092a \u092e\u0941\u091d\u0938\u0947 \u0915\u093f\u0938\u0940 \u092d\u0940 \u092c\u093e\u0930\u0947 \u092e\u0947\u0902 \u092c\u093e\u0924 \u0915\u0930 \u0938\u0915\u0924\u0947 \u0939\u0948\u0902\u0964 \u0906\u091c \u0906\u092a \u0915\u0948\u0938\u0947 \u0939\u0948\u0902?",
+    "bn": "\u09b9\u09cd\u09af\u09be\u09b2\u09cb, \u0986\u09aa\u09a8\u09bf \u098f\u0996\u09be\u09a8\u09c7 \u098f\u09b8\u09c7\u099b\u09c7\u09a8 \u09a6\u09c7\u0996\u09c7 \u0996\u09c1\u09ac \u09ad\u09be\u09b2\u09cb \u09b2\u09be\u0997\u099b\u09c7\u0964 \u098f\u099f\u09be \u0986\u09aa\u09a8\u09be\u09b0 \u09a8\u09bf\u099c\u09c7\u09b0 \u099c\u09be\u09af\u09bc\u0997\u09be \u2014 \u09b8\u09ae\u09cd\u09aa\u09c2\u09b0\u09cd\u09a3 \u09ac\u09cd\u09af\u0995\u09cd\u09a4\u09bf\u0997\u09a4\u0964 \u0986\u09aa\u09a8\u09bf \u0986\u09ae\u09be\u09b0 \u09b8\u09be\u09a5\u09c7 \u09af\u09c7\u0995\u09cb\u09a8\u09cb \u09ac\u09bf\u09b7\u09af\u09bc\u09c7 \u0995\u09a5\u09be \u09ac\u09b2\u09a4\u09c7 \u09aa\u09be\u09b0\u09c7\u09a8\u0964 \u0986\u099c \u0986\u09aa\u09a8\u09bf \u0995\u09c7\u09ae\u09a8 \u0986\u099b\u09c7\u09a8?",
+    "ta": "\u0bb5\u0ba3\u0b95\u0bcd\u0b95\u0bae\u0bcd, \u0ba8\u0bc0\u0b99\u0bcd\u0b95\u0bb3\u0bcd \u0b87\u0b99\u0bcd\u0b95\u0bc7 \u0bb5\u0ba8\u0bcd\u0ba4\u0ba4\u0bbf\u0bb2\u0bcd \u0bae\u0bbf\u0b95\u0bb5\u0bc1\u0bae\u0bcd \u0bae\u0b95\u0bbf\u0bb4\u0bcd\u0b9a\u0bcd\u0b9a\u0bbf. \u0b87\u0ba4\u0bc1 \u0b89\u0b99\u0bcd\u0b95\u0bb3\u0bcd \u0b9a\u0bca\u0ba8\u0bcd\u0ba4 \u0b87\u0b9f\u0bae\u0bcd \u2014 \u0bae\u0bc1\u0bb1\u0bcd\u0bb1\u0bbf\u0bb2\u0bc1\u0bae\u0bcd \u0ba4\u0ba9\u0bbf\u0baa\u0bcd\u0baa\u0b9f\u0bcd\u0b9f\u0ba4\u0bc1. \u0ba8\u0bc0\u0b99\u0bcd\u0b95\u0bb3\u0bcd \u0b8e\u0ba4\u0bc8\u0baa\u0bcd \u0baa\u0bb1\u0bcd\u0bb1\u0bbf\u0baf\u0bc1\u0bae\u0bcd \u0b8e\u0ba9\u0bcd\u0ba9\u0bbf\u0b9f\u0bae\u0bcd \u0baa\u0bc7\u0b9a\u0bb2\u0bbe\u0bae\u0bcd. \u0b87\u0ba9\u0bcd\u0bb1\u0bc1 \u0ba8\u0bc0\u0b99\u0bcd\u0b95\u0bb3\u0bcd \u0b8e\u0baa\u0bcd\u0baa\u0b9f\u0bbf \u0b87\u0bb0\u0bc1\u0b95\u0bcd\u0b95\u0bbf\u0bb1\u0bc0\u0bb0\u0bcd\u0b95\u0bb3\u0bcd?",
+    "te": "\u0c39\u0c32\u0c4b, \u0c2e\u0c40\u0c30\u0c41 \u0c07\u0c15\u0c4d\u0c15\u0c21 \u0c09\u0c28\u0c4d\u0c28\u0c02\u0c26\u0c41\u0c15\u0c41 \u0c1a\u0c3e\u0c32\u0c3e \u0c38\u0c02\u0c24\u0c4b\u0c37\u0c02. \u0c07\u0c26\u0c3f \u0c2e\u0c40 \u0c38\u0c4d\u0c35\u0c02\u0c24 \u0c38\u0c4d\u0c25\u0c32\u0c02 \u2014 \u0c2a\u0c42\u0c30\u0c4d\u0c24\u0c3f\u0c17\u0c3e \u0c2a\u0c4d\u0c30\u0c48\u0c35\u0c47\u0c1f\u0c4d. \u0c2e\u0c40\u0c30\u0c41 \u0c28\u0c3e\u0c24\u0c4b \u0c0f\u0c26\u0c48\u0c28\u0c3e \u0c17\u0c41\u0c30\u0c3f\u0c02\u0c1a\u0c3f \u0c2e\u0c3e\u0c1f\u0c4d\u0c32\u0c3e\u0c21\u0c35\u0c1a\u0c4d\u0c1a\u0c41. \u0c08\u0c30\u0c4b\u0c1c\u0c41 \u0c2e\u0c40\u0c30\u0c41 \u0c0e\u0c32\u0c3e \u0c09\u0c28\u0c4d\u0c28\u0c3e\u0c30\u0c41?",
+    "mr": "\u0939\u0945\u0932\u094b, \u0924\u0941\u092e\u094d\u0939\u0940 \u0907\u0925\u0947 \u0906\u0932\u093e\u0924 \u092f\u093e\u091a\u093e \u0916\u0942\u092a \u0906\u0928\u0902\u0926 \u0935\u093e\u091f\u0924\u094b. \u0939\u0940 \u0924\u0941\u092e\u091a\u0940 \u0938\u094d\u0935\u0924\u0903\u091a\u0940 \u091c\u093e\u0917\u093e \u0906\u0939\u0947 \u2014 \u092a\u0942\u0930\u094d\u0923\u092a\u0923\u0947 \u0916\u093e\u091c\u0917\u0940. \u0924\u0941\u092e\u094d\u0939\u0940 \u092e\u093e\u091d\u094d\u092f\u093e\u0936\u0940 \u0915\u0936\u093e\u092c\u0926\u094d\u0926\u0932\u0939\u0940 \u092c\u094b\u0932\u0942 \u0936\u0915\u0924\u093e. \u0906\u091c \u0924\u0941\u092e\u094d\u0939\u0940 \u0915\u0938\u0947 \u0906\u0939\u093e\u0924?",
+    "ur": "\u06c1\u06cc\u0644\u0648\u060c \u0622\u067e \u06cc\u06c1\u0627\u06ba \u0622\u0626\u06d2 \u0645\u062c\u06be\u06d2 \u0628\u06c1\u062a \u062e\u0648\u0634\u06cc \u06c1\u0648\u0626\u06cc\u06d4 \u06cc\u06c1 \u0622\u067e \u06a9\u06cc \u0627\u067e\u0646\u06cc \u062c\u06af\u06c1 \u06c1\u06d2 \u2014 \u0645\u06a9\u0645\u0644 \u0637\u0648\u0631 \u067e\u0631 \u0646\u062c\u06cc\u06d4 \u0622\u067e \u0645\u062c\u06be \u0633\u06d2 \u06a9\u0633\u06cc \u0628\u06be\u06cc \u0628\u0627\u0631\u06d2 \u0645\u06cc\u06ba \u0628\u0627\u062a \u06a9\u0631 \u0633\u06a9\u062a\u06d2 \u06c1\u06cc\u06ba\u06d4 \u0622\u062c \u0622\u067e \u06a9\u06cc\u0633\u06d2 \u06c1\u06cc\u06ba\u061f",
+    "gu": "\u0aa8\u0aae\u0ab8\u0acd\u0aa4\u0ac7, \u0aa4\u0aae\u0ac7 \u0a85\u0ab9\u0ac0\u0a82 \u0a86\u0ab5\u0acd\u0aaf\u0abe \u0aa4\u0ac7 \u0a9c\u0acb\u0a88\u0aa8\u0ac7 \u0a96\u0ac2\u0aac \u0a86\u0aa8\u0a82\u0aa6 \u0aa5\u0aaf\u0acb. \u0a86 \u0aa4\u0aae\u0abe\u0ab0\u0ac0 \u0aaa\u0acb\u0aa4\u0abe\u0aa8\u0ac0 \u0a9c\u0a97\u0acd\u0aaf\u0abe \u0a9b\u0ac7 \u2014 \u0aaa\u0ac2\u0ab0\u0ac0 \u0ab0\u0ac0\u0aa4\u0ac7 \u0a96\u0abe\u0aa8\u0a97\u0ac0. \u0aa4\u0aae\u0ac7 \u0aae\u0abe\u0ab0\u0ac0 \u0ab8\u0abe\u0aa5\u0ac7 \u0a95\u0acb\u0a88\u0aaa\u0aa3 \u0ab5\u0abe\u0aa4 \u0a95\u0ab0\u0ac0 \u0ab6\u0a95\u0acb \u0a9b\u0acb. \u0a86\u0a9c\u0ac7 \u0aa4\u0aae\u0ac7 \u0a95\u0ac7\u0aae \u0a9b\u0acb?",
+    "pa": "\u0a38\u0a24 \u0a38\u0a4d\u0a30\u0a40 \u0a05\u0a15\u0a3e\u0a32, \u0a24\u0a41\u0a38\u0a40\u0a02 \u0a07\u0a71\u0a25\u0a47 \u0a06\u0a0f \u0a2c\u0a39\u0a41\u0a24 \u0a1a\u0a70\u0a17\u0a3e \u0a32\u0a71\u0a17\u0a3e. \u0a07\u0a39 \u0a24\u0a41\u0a39\u0a3e\u0a21\u0a40 \u0a05\u0a2a\u0a23\u0a40 \u0a25\u0a3e\u0a02 \u0a39\u0a48 \u2014 \u0a2a\u0a42\u0a30\u0a40 \u0a24\u0a30\u0a4d\u0a39\u0a3e\u0a02 \u0a28\u0a3f\u0a71\u0a1c\u0a40. \u0a24\u0a41\u0a38\u0a40\u0a02 \u0a2e\u0a47\u0a30\u0a47 \u0a28\u0a3e\u0a32 \u0a15\u0a3f\u0a38\u0a47 \u0a35\u0a40 \u0a2c\u0a3e\u0a30\u0a47 \u0a17\u0a71\u0a32 \u0a15\u0a30 \u0a38\u0a15\u0a26\u0a47 \u0a39\u0a4b. \u0a05\u0a71\u0a1c \u0a24\u0a41\u0a38\u0a40\u0a02 \u0a15\u0a3f\u0a35\u0a47\u0a02 \u0a39\u0a4b?",
+    "kn": "\u0ca8\u0cae\u0cb8\u0ccd\u0c95\u0cbe\u0cb0, \u0ca8\u0cc0\u0cb5\u0cc1 \u0c87\u0cb2\u0ccd\u0cb2\u0cbf \u0cac\u0c82\u0ca6\u0cbf\u0ca6\u0ccd\u0ca6\u0cc0\u0cb0\u0cbf \u0ca4\u0cc1\u0c82\u0cac\u0cbe \u0c96\u0cc1\u0cb7\u0cbf \u0c86\u0caf\u0cbf\u0ca4\u0cc1. \u0c87\u0ca6\u0cc1 \u0ca8\u0cbf\u0cae\u0ccd\u0cae\u0ca6\u0cc7 \u0c86\u0ca6 \u0c9c\u0cbe\u0c97 \u2014 \u0cb8\u0c82\u0caa\u0cc2\u0cb0\u0ccd\u0ca3\u0cb5\u0cbe\u0c97\u0cbf \u0c96\u0cbe\u0cb8\u0c97\u0cbf. \u0ca8\u0cc0\u0cb5\u0cc1 \u0ca8\u0ca8\u0ccd\u0ca8 \u0c9c\u0cca\u0ca4\u0cc6 \u0c8f\u0ca8\u0cbe\u0ca6\u0cb0\u0cc2 \u0cac\u0c97\u0ccd\u0c97\u0cc6 \u0cae\u0cbe\u0ca4\u0ca8\u0cbe\u0ca1\u0cac\u0cb9\u0cc1\u0ca6\u0cc1. \u0c88\u0c97 \u0ca8\u0cc0\u0cb5\u0cc1 \u0cb9\u0cc7\u0c97\u0cbf\u0ca6\u0ccd\u0ca6\u0cc0\u0cb0\u0cbf?",
+    "ml": "\u0d39\u0d3e\u0d2f\u0d4d, \u0d28\u0d3f\u0d19\u0d4d\u0d19\u0d33\u0d4d\u200d \u0d07\u0d35\u0d3f\u0d1f\u0d46 \u0d35\u0d28\u0d4d\u0d28\u0d24\u0d3f\u0d32\u0d4d\u200d \u0d24\u0d41\u0d02\u0d2c \u0d38\u0d28\u0d4d\u0d24\u0d4b\u0d37\u0d02. \u0d07\u0d24\u0d4d \u0d28\u0d3f\u0d19\u0d4d\u0d19\u0d33\u0d41\u0d1f\u0d46 \u0d38\u0d4d\u0d35\u0d28\u0d4d\u0d24\u0d02 \u0d07\u0d1f\u0d2e\u0d3e\u0d23\u0d4d \u2014 \u0d2a\u0d42\u0d7c\u0d23\u0d4d\u0d23\u0d2e\u0d3e\u0d2f\u0d41\u0d02 \u0d38\u0d4d\u0d35\u0d15\u0d3e\u0d30\u0d4d\u0d2f\u0d02. \u0d28\u0d3f\u0d19\u0d4d\u0d19\u0d33\u0d4d\u200d\u0d15\u0d4d\u0d15\u0d4d \u0d0e\u0d28\u0d4d\u0d24\u0d41\u0d02 \u0d0e\u0d28\u0d4d\u0d28\u0d4b\u0d1f\u0d4d \u0d38\u0d02\u0d38\u0d3e\u0d30\u0d3f\u0d15\u0d4d\u0d15\u0d3e\u0d02. \u0d07\u0d28\u0d4d\u0d28\u0d4d \u0d28\u0d3f\u0d19\u0d4d\u0d19\u0d33\u0d4d\u200d \u0d0e\u0d19\u0d4d\u0d19\u0d28\u0d46\u0d2f\u0d3e\u0d23\u0d4d?",
+    "or": "\u0b28\u0b2e\u0b38\u0b4d\u0b15\u0b3e\u0b30, \u0b06\u0b2a\u0b23 \u0b0f\u0b20\u0b3f \u0b06\u0b38\u0b3f\u0b32\u0b47 \u0b2c\u0b39\u0b41\u0b24 \u0b2d\u0b32 \u0b32\u0b3e\u0b17\u0b3f\u0b32\u0b3e. \u0b0f\u0b39\u0b3e \u0b06\u0b2a\u0b23\u0b19\u0b4d\u0b15\u0b30 \u0b28\u0b3f\u0b1c\u0b30 \u0b1c\u0b3e\u0b17\u0b3e \u2014 \u0b38\u0b2e\u0b4d\u0b2a\u0b42\u0b30\u0b4d\u0b23 \u0b17\u0b4b\u0b2a\u0b28\u0b40\u0b5f. \u0b06\u0b2a\u0b23 \u0b2e\u0b4b\u0b24\u0b47 \u0b38\u0b3e\u0b19\u0b4d\u0b17\u0b30\u0b47 \u0b2f\u0b47\u0b15\u0b4b\u0b23\u0b38\u0b3f \u0b2c\u0b3f\u0b37\u0b5f\u0b30\u0b47 \u0b15\u0b25\u0b3e \u0b39\u0b47\u0b07\u0b2a\u0b3e\u0b30\u0b3f\u0b2c\u0b47. \u0b06\u0b1c\u0b3f \u0b06\u0b2a\u0b23 \u0b15\u0b47\u0b2e\u0b3f\u0b24\u0b3f \u0b05\u0b1b\u0b28\u0b4d\u0b24\u0b3f?",
+    "as": "\u09a8\u09ae\u09b8\u09cd\u0995\u09be\u09f0, \u0986\u09aa\u09c1\u09a8\u09bf \u0987\u09af\u09bc\u09be\u09a4 \u0985\u09b9\u09be\u09a4 \u09ac\u09b0 \u09ad\u09be\u09b2 \u09b2\u09be\u0997\u09bf\u09b2\u0964 \u098f\u0987\u099f\u09cb \u0986\u09aa\u09cb\u09a8\u09be\u09f0 \u09a8\u09bf\u099c\u09f0 \u09a0\u09be\u0987 \u2014 \u09b8\u09ae\u09cd\u09aa\u09c2\u09f0\u09cd\u09a3 \u09ac\u09cd\u09af\u0995\u09cd\u09a4\u09bf\u0997\u09a4\u0964 \u0986\u09aa\u09c1\u09a8\u09bf \u09ae\u09cb\u09f0 \u09b2\u0997\u09a4 \u09af\u09bf\u0995\u09cb\u09a8\u09cb \u0995\u09a5\u09be \u09aa\u09be\u09a4\u09bf\u09ac \u09aa\u09be\u09f0\u09c7\u0964 \u0986\u099c\u09bf \u0986\u09aa\u09c1\u09a8\u09bf \u0995\u09c7\u09a8\u09c7\u0995\u09c1\u09f1\u09be \u0986\u099b\u09c7?",
+    "ne": "\u0928\u092e\u0938\u094d\u0924\u0947, \u0924\u092a\u093e\u0908\u0902 \u092f\u0939\u093e\u0901 \u0906\u0909\u0928\u0941\u092d\u092f\u094b \u0916\u0941\u0938\u0940 \u0932\u093e\u0917\u094d\u092f\u094b\u0964 \u092f\u094b \u0924\u092a\u093e\u0908\u0902\u0915\u094b \u0905\u092a\u094d\u0928\u0948 \u0920\u093e\u0909\u0901 \u0939\u094b \u2014 \u092a\u0942\u0930\u094d\u0923 \u0930\u0942\u092a\u092e\u093e \u0928\u093f\u091c\u0940\u0964 \u0924\u092a\u093e\u0908\u0902 \u092e\u0938\u0901\u0917 \u091c\u0941\u0928\u0938\u0941\u0915\u0948 \u0915\u0941\u0930\u093e\u0915\u094b \u092c\u093e\u0930\u0947\u092e\u093e \u0915\u0941\u0930\u093e \u0917\u0930\u094d\u0928 \u0938\u0915\u094d\u0928\u0941\u0939\u0941\u0928\u094d\u091b\u0964 \u0906\u091c \u0924\u092a\u093e\u0908\u0902 \u0915\u0938\u094d\u0924\u094b \u0939\u0941\u0928\u0941\u0939\u0941\u0928\u094d\u091b?",
+    "sa": "\u0928\u092e\u0938\u094d\u0915\u093e\u0930\u0903, \u092d\u0935\u0924\u0903 \u0905\u0924\u094d\u0930 \u0906\u0917\u092e\u0928\u0947\u0928 \u092e\u092e \u0905\u0924\u0940\u0935 \u0939\u0930\u094d\u0937\u0903 \u091c\u093e\u0924\u0903\u0964 \u0907\u0926\u0902 \u092d\u0935\u0924\u0903 \u0938\u094d\u0935\u0915\u0940\u092f\u0902 \u0938\u094d\u0925\u093e\u0928\u092e\u094d \u2014 \u0938\u0930\u094d\u0935\u0925\u093e \u0917\u094b\u092a\u0928\u0940\u092f\u092e\u094d\u0964 \u092d\u0935\u093e\u0928\u094d \u092e\u092f\u093e \u0938\u0939 \u0915\u093f\u092e\u092a\u093f \u0935\u093e\u0930\u094d\u0924\u093e\u0902 \u0915\u0930\u094d\u0924\u0941\u0902 \u0936\u0915\u094d\u0928\u094b\u0924\u093f\u0964 \u0905\u0926\u094d\u092f \u092d\u0935\u093e\u0928\u094d \u0915\u0925\u092e\u094d \u0905\u0938\u094d\u0924\u093f?",
+}
+
+
+def _build_voice_panel(backend_url: str, jwt: str, language_code: str = "en") -> str:
     """
     Builds the complete self-contained voice panel HTML.
     All JS runs inside this iframe — no external deps except Google Fonts.
+    Features: canvas-based audio waveform visualizer, real-time mic reactivity,
+    smooth speaking waves, language-aware greeting in selected language.
     """
-    profiles_json = json.dumps(_WEB_SPEECH_PROFILES)
-    bcp47_json    = json.dumps(_BCP47)
+    profiles_json  = json.dumps(_WEB_SPEECH_PROFILES)
+    bcp47_json     = json.dumps(_BCP47)
+    greetings_json = json.dumps(_GREETINGS, ensure_ascii=False)
+    lang_names_json = json.dumps(_LANG_NAMES)
     cat_colors    = json.dumps({
         "Stable":            "#48bb78",
         "Mild Stress":       "#68d391",
@@ -132,161 +177,226 @@ def _build_voice_panel(backend_url: str, jwt: str) -> str:
 *{{margin:0;padding:0;box-sizing:border-box;}}
 html,body{{
     font-family:'Sora',sans-serif;
-    background:radial-gradient(ellipse at 50% 0%, #0c1829 0%, #060c18 68%);
+    background:radial-gradient(ellipse at 50% -10%, #0e1f38 0%, #060c18 70%);
     color:#e8edf5;width:100%;min-height:100vh;overflow-x:hidden;scroll-behavior:smooth;
 }}
 
+/* ── Orb Container ── */
+.orb-section{{
+    display:flex;flex-direction:column;align-items:center;
+    padding:18px 0 6px;position:relative;
+}}
+.canvas-wrap{{
+    position:relative;width:240px;height:240px;
+    display:flex;align-items:center;justify-content:center;
+}}
+#vizCanvas{{
+    position:absolute;top:0;left:0;width:100%;height:100%;
+    pointer-events:none;
+}}
+
 /* ── Orb ── */
-.orb-wrap{{display:flex;flex-direction:column;align-items:center;padding:24px 0 10px;gap:12px;}}
 .orb{{
-    width:106px;height:106px;border-radius:50%;cursor:pointer;border:none;outline:none;
-    position:relative;flex-shrink:0;
-    background:radial-gradient(circle at 38% 32%, #63b3ed 0%, #4fd1c5 48%, #7c3aed 100%);
-    animation:orbIdle 4.5s ease-in-out infinite;
-    transition:transform .13s ease;
+    width:96px;height:96px;border-radius:50%;cursor:pointer;border:none;outline:none;
+    position:relative;z-index:2;flex-shrink:0;
+    background:radial-gradient(circle at 36% 30%, #63b3ed 0%, #4fd1c5 45%, #7c3aed 100%);
+    box-shadow:0 0 50px rgba(99,179,237,.25), 0 0 100px rgba(79,209,197,.10), inset 0 0 30px rgba(255,255,255,.05);
+    transition:transform .15s ease, box-shadow .3s ease;
 }}
-.orb:hover{{transform:scale(1.05);}}
-.orb:active{{transform:scale(0.96);}}
+.orb:hover{{transform:scale(1.06);}}
+.orb:active{{transform:scale(0.95);}}
+
+/* Orb glow ring */
+.orb::after{{
+    content:'';position:absolute;inset:-8px;border-radius:50%;
+    border:2px solid rgba(99,179,237,.15);
+    animation:ringPulse 4s ease-in-out infinite;
+    pointer-events:none;
+}}
+@keyframes ringPulse{{
+    0%,100%{{opacity:.3;transform:scale(1);}}
+    50%{{opacity:.7;transform:scale(1.08);}}
+}}
+
+/* State-specific orb styles */
 .orb.listening{{
-    background:radial-gradient(circle at 38% 32%, #fc8181 0%, #f6ad55 48%, #fc4e4e 100%)!important;
-    animation:orbListen .65s ease-in-out infinite!important;
+    background:radial-gradient(circle at 36% 30%, #fc8181 0%, #f6ad55 45%, #fc4e4e 100%)!important;
+    box-shadow:0 0 60px rgba(252,129,129,.35), 0 0 120px rgba(246,173,85,.15)!important;
 }}
+.orb.listening::after{{border-color:rgba(252,129,129,.25)!important;animation:ringPulseRed .8s ease-in-out infinite!important;}}
+@keyframes ringPulseRed{{
+    0%,100%{{opacity:.3;transform:scale(1);border-color:rgba(252,129,129,.25);}}
+    50%{{opacity:1;transform:scale(1.15);border-color:rgba(252,129,129,.5);}}
+}}
+
 .orb.thinking{{
-    background:radial-gradient(circle at 38% 32%, #b794f4 0%, #7c3aed 48%, #553c9a 100%)!important;
-    animation:orbThink 1.1s ease-in-out infinite!important;
+    background:radial-gradient(circle at 36% 30%, #b794f4 0%, #7c3aed 45%, #553c9a 100%)!important;
+    box-shadow:0 0 60px rgba(183,148,244,.35), 0 0 110px rgba(124,58,237,.15)!important;
+    animation:orbSpin 2s linear infinite!important;
 }}
+.orb.thinking::after{{border-color:rgba(183,148,244,.3)!important;animation:ringThink 1.2s ease-in-out infinite!important;}}
+@keyframes orbSpin{{
+    0%{{background:radial-gradient(circle at 36% 30%, #b794f4 0%, #7c3aed 45%, #553c9a 100%);}}
+    33%{{background:radial-gradient(circle at 60% 60%, #b794f4 0%, #7c3aed 45%, #553c9a 100%);}}
+    66%{{background:radial-gradient(circle at 30% 65%, #b794f4 0%, #7c3aed 45%, #553c9a 100%);}}
+    100%{{background:radial-gradient(circle at 36% 30%, #b794f4 0%, #7c3aed 45%, #553c9a 100%);}}
+}}
+@keyframes ringThink{{
+    0%,100%{{opacity:.2;transform:scale(1) rotate(0deg);}}
+    50%{{opacity:.6;transform:scale(1.12) rotate(180deg);}}
+}}
+
 .orb.speaking{{
-    animation:orbSpeak .75s ease-in-out infinite!important;
+    box-shadow:0 0 60px rgba(99,179,237,.4), 0 0 120px rgba(79,209,197,.2)!important;
 }}
-@keyframes orbIdle{{
-    0%,100%{{box-shadow:0 0 0 0 rgba(99,179,237,0),0 14px 44px rgba(99,179,237,.18);transform:scale(1);}}
-    42%    {{box-shadow:0 0 0 10px rgba(99,179,237,.06),0 14px 52px rgba(79,209,197,.26);transform:scale(1.04);}}
-    78%    {{box-shadow:0 0 0 5px rgba(79,209,197,.04),0 14px 48px rgba(99,179,237,.20);transform:scale(1.02);}}
-}}
-@keyframes orbListen{{
-    0%,100%{{box-shadow:0 0 0 0 rgba(252,129,129,.82);transform:scale(1);}}
-    50%    {{box-shadow:0 0 0 28px rgba(252,129,129,0);transform:scale(1.13);}}
-}}
-@keyframes orbThink{{
-    0%,100%{{box-shadow:0 0 0 0 rgba(183,148,244,.72);transform:scale(1);}}
-    50%    {{box-shadow:0 0 0 24px rgba(183,148,244,0);transform:scale(1.08);}}
-}}
-@keyframes orbSpeak{{
-    0%,100%{{box-shadow:0 0 0 0 rgba(99,179,237,.82);transform:scale(1.02);}}
-    50%    {{box-shadow:0 0 0 26px rgba(99,179,237,0);transform:scale(1.13);}}
+.orb.speaking::after{{animation:ringPulseSpeaking .9s ease-in-out infinite!important;}}
+@keyframes ringPulseSpeaking{{
+    0%,100%{{opacity:.3;transform:scale(1);border-color:rgba(79,209,197,.2);}}
+    50%{{opacity:.9;transform:scale(1.18);border-color:rgba(79,209,197,.5);}}
 }}
 
-/* Wave bars inside orb */
-.orb-waves{{
-    display:none;position:absolute;bottom:20px;left:50%;
-    transform:translateX(-50%);align-items:flex-end;gap:3px;height:24px;
+/* ── Orb icon (mic SVG inside) ── */
+.orb-icon{{
+    position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+    width:32px;height:32px;opacity:.7;transition:opacity .2s;
+    pointer-events:none;
 }}
-.orb.listening .orb-waves{{display:flex;}}
-.ow{{width:3px;border-radius:2px;background:rgba(255,255,255,.92);height:4px;
-     animation:owAnim .58s ease-in-out infinite;}}
-.ow:nth-child(1){{animation-delay:.00s}} .ow:nth-child(2){{animation-delay:.10s}}
-.ow:nth-child(3){{animation-delay:.20s}} .ow:nth-child(4){{animation-delay:.30s}}
-.ow:nth-child(5){{animation-delay:.20s}} .ow:nth-child(6){{animation-delay:.10s}}
-.ow:nth-child(7){{animation-delay:.00s}}
-@keyframes owAnim{{0%,100%{{height:4px;opacity:.45;}}50%{{height:22px;opacity:1;}}}}
+.orb:hover .orb-icon{{opacity:.9;}}
 
-/* Status text */
+/* ── Status area ── */
+.status-area{{
+    display:flex;flex-direction:column;align-items:center;gap:8px;
+    padding:2px 0 8px;
+}}
 .orb-status{{
-    font-size:.66rem;color:#8fa2bc;letter-spacing:.10em;
+    font-size:.68rem;color:#8fa2bc;letter-spacing:.10em;
     text-transform:uppercase;min-height:18px;text-align:center;
-    transition:color .3s;
+    transition:color .3s, opacity .3s;
 }}
 
 /* Language badge */
 .lang-badge{{
     display:none;align-items:center;gap:7px;
     padding:5px 14px;border-radius:22px;
-    background:rgba(79,209,197,.08);border:1px solid rgba(79,209,197,.22);
+    background:rgba(79,209,197,.06);border:1px solid rgba(79,209,197,.18);
+    backdrop-filter:blur(8px);
     font-size:.64rem;color:#4fd1c5;letter-spacing:.05em;
     animation:fadeUp .3s ease;
 }}
 .lang-badge.show{{display:flex;}}
 .lang-dot{{
-    width:6px;height:6px;border-radius:50%;background:#4fd1c5;
+    width:6px;height:6px;border-radius:50%;
+    background:linear-gradient(135deg,#4fd1c5,#63b3ed);
     animation:ldPulse 2.2s ease-in-out infinite;
 }}
 @keyframes ldPulse{{0%,100%{{opacity:.30;transform:scale(1);}}50%{{opacity:1;transform:scale(1.4);}}}}
 
-/* Controls */
+/* ── Controls ── */
 .controls{{display:flex;gap:10px;padding:0 16px 12px;}}
 .ctrl-btn{{
-    flex:1;padding:10px 0;border:none;border-radius:11px;
+    flex:1;padding:10px 0;border:none;border-radius:12px;
     font-family:'Sora',sans-serif;font-size:.71rem;font-weight:600;
-    letter-spacing:.04em;cursor:pointer;transition:opacity .15s,transform .12s,box-shadow .2s;
+    letter-spacing:.04em;cursor:pointer;
+    transition:all .18s ease;
+    backdrop-filter:blur(6px);
 }}
-.ctrl-btn:hover{{opacity:.80;}} .ctrl-btn:active{{transform:scale(.97);}}
+.ctrl-btn:hover{{opacity:.85;transform:translateY(-1px);}}
+.ctrl-btn:active{{transform:scale(.97) translateY(0);}}
 .ctrl-btn:focus-visible{{outline:none;box-shadow:0 0 0 3px rgba(99,179,237,.25);}}
-.btn-start{{background:linear-gradient(135deg,#2a6496,#1a7a6e);color:#d6f0ff;}}
-.btn-stop {{background:rgba(252,129,129,.14);color:#fc8181;border:1px solid rgba(252,129,129,.28);}}
-.btn-mute {{background:rgba(255,255,255,.05);color:#718096;border:1px solid rgba(255,255,255,.08);}}
+.btn-start{{
+    background:linear-gradient(135deg,rgba(42,100,150,.8),rgba(26,122,110,.8));
+    color:#d6f0ff;border:1px solid rgba(99,179,237,.2);
+}}
+.btn-stop{{
+    background:rgba(252,129,129,.1);color:#fc8181;
+    border:1px solid rgba(252,129,129,.25);
+}}
+.btn-mute{{
+    background:rgba(255,255,255,.04);color:#718096;
+    border:1px solid rgba(255,255,255,.08);
+}}
 
-/* Crisis banner */
+/* ── Crisis banner ── */
 .crisis-bar{{
-    margin:0 14px 10px;padding:10px 14px;border-radius:11px;
+    margin:0 14px 10px;padding:10px 14px;border-radius:12px;
     font-size:.72rem;line-height:1.6;display:none;
+    backdrop-filter:blur(8px);
 }}
 .crisis-bar.show{{display:block;animation:fadeUp .3s ease;}}
-.crisis-bar.passive{{background:rgba(237,137,54,.09);border:1px solid rgba(237,137,54,.28);color:#ed8936;}}
-.crisis-bar.active {{background:rgba(252,78,78,.11); border:1px solid rgba(252,78,78,.32); color:#fc8181;}}
+.crisis-bar.passive{{background:rgba(237,137,54,.08);border:1px solid rgba(237,137,54,.25);color:#ed8936;}}
+.crisis-bar.active {{background:rgba(252,78,78,.10); border:1px solid rgba(252,78,78,.30); color:#fc8181;}}
 
-/* Transcript */
+/* ── Transcript ── */
 .transcript{{
     margin:0 14px 10px;
     border:1px solid rgba(255,255,255,.06);border-radius:16px;
-    background:rgba(10,19,34,.74);backdrop-filter:blur(10px);
-    overflow-y:auto;max-height:290px;padding:12px;scroll-behavior:smooth;
-    transition:border-color .2s ease, box-shadow .2s ease;
+    background:rgba(8,15,28,.7);backdrop-filter:blur(12px);
+    overflow-y:auto;max-height:260px;padding:12px;scroll-behavior:smooth;
+    transition:border-color .25s ease, box-shadow .25s ease;
 }}
-.transcript:hover{{border-color:rgba(99,179,237,.2);box-shadow:inset 0 0 0 1px rgba(255,255,255,.03);}}
+.transcript:hover{{
+    border-color:rgba(99,179,237,.15);
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.02), 0 4px 24px rgba(0,0,0,.2);
+}}
 .transcript::-webkit-scrollbar{{width:3px;}}
 .transcript::-webkit-scrollbar-thumb{{background:rgba(255,255,255,.08);border-radius:2px;}}
 
-/* Turns */
+/* ── Turns ── */
 .turn{{margin-bottom:13px;animation:fadeUp .28s ease;}}
 .turn-row{{display:flex;align-items:flex-start;gap:9px;}}
 .turn-row.user-row{{flex-direction:row-reverse;}}
 .avatar{{
-    width:28px;height:28px;border-radius:50%;flex-shrink:0;
+    width:30px;height:30px;border-radius:50%;flex-shrink:0;
     display:flex;align-items:center;justify-content:center;
     font-size:.56rem;font-weight:700;letter-spacing:.02em;
 }}
-.avatar-ai  {{background:linear-gradient(135deg,#1a3050,#0d2840);color:#4fd1c5;border:1px solid rgba(79,209,197,.22);}}
-.avatar-user{{background:linear-gradient(135deg,#1e3a5f,#162d4a);color:#63b3ed;border:1px solid rgba(99,179,237,.22);}}
-.bubble{{max-width:81%;padding:9px 13px;font-size:.79rem;line-height:1.65;word-break:break-word;}}
-.bubble-ai  {{background:rgba(20,28,50,.92);border:1px solid rgba(255,255,255,.07);
-              border-radius:4px 14px 14px 14px;color:#c8d4e6;}}
-.bubble-user{{background:rgba(28,52,90,.88);border:1px solid rgba(99,179,237,.16);
-              border-radius:14px 4px 14px 14px;color:#bdd4f0;}}
+.avatar-ai{{
+    background:linear-gradient(135deg,#0e2a45,#0a1e35);color:#4fd1c5;
+    border:1px solid rgba(79,209,197,.2);
+    box-shadow:0 0 12px rgba(79,209,197,.08);
+}}
+.avatar-user{{
+    background:linear-gradient(135deg,#1c3558,#14294a);color:#63b3ed;
+    border:1px solid rgba(99,179,237,.2);
+    box-shadow:0 0 12px rgba(99,179,237,.08);
+}}
+.bubble{{max-width:81%;padding:10px 14px;font-size:.79rem;line-height:1.65;word-break:break-word;}}
+.bubble-ai{{
+    background:rgba(16,24,44,.88);
+    border:1px solid rgba(255,255,255,.06);
+    border-radius:4px 14px 14px 14px;color:#c8d4e6;
+}}
+.bubble-user{{
+    background:rgba(24,48,82,.82);
+    border:1px solid rgba(99,179,237,.14);
+    border-radius:14px 4px 14px 14px;color:#bdd4f0;
+}}
 .turn-meta{{font-size:.58rem;color:#8fa2bc;margin-top:4px;display:flex;align-items:center;gap:5px;}}
 .turn-row.user-row .turn-meta{{justify-content:flex-end;}}
 .meta-dot{{width:4px;height:4px;border-radius:50%;}}
 .lang-tag{{
     font-size:.55rem;padding:1px 6px;border-radius:10px;
-    background:rgba(79,209,197,.08);border:1px solid rgba(79,209,197,.18);color:#4fd1c5;
+    background:rgba(79,209,197,.06);border:1px solid rgba(79,209,197,.15);color:#4fd1c5;
 }}
 
-/* Footer hint */
+/* ── Footer ── */
 .panel-hint{{
-    text-align:center;font-size:.62rem;color:#8fa2bc;
-    letter-spacing:.06em;padding-bottom:12px;
+    text-align:center;font-size:.60rem;color:#566a84;
+    letter-spacing:.06em;padding:2px 0 10px;
 }}
 
+/* ── Responsive ── */
 @media (max-width: 560px) {{
-    .orb{{width:92px;height:92px;}}
+    .canvas-wrap{{width:200px;height:200px;}}
+    .orb{{width:80px;height:80px;}}
     .controls{{flex-direction:column;padding:0 14px 10px;gap:8px;}}
     .ctrl-btn{{padding:9px 0;font-size:.68rem;}}
-    .transcript{{max-height:250px;margin:0 10px 10px;padding:10px;}}
+    .transcript{{max-height:220px;margin:0 10px 10px;padding:10px;}}
     .bubble{{max-width:88%;font-size:.75rem;}}
-    .panel-hint{{padding:0 10px 10px;line-height:1.5;}}
 }}
 
 @media (prefers-reduced-motion: reduce) {{
-    *{{animation:none !important;transition:none !important;scroll-behavior:auto !important;}}
+    *{{animation:none!important;transition:none!important;scroll-behavior:auto!important;}}
 }}
 
 @keyframes fadeUp{{from{{opacity:0;transform:translateY(5px);}}to{{opacity:1;transform:translateY(0);}}}}
@@ -294,21 +404,29 @@ html,body{{
 </head>
 <body>
 
-<div class="orb-wrap">
-    <button class="orb" id="orb">
-        <div class="orb-waves">
-            <div class="ow"></div><div class="ow"></div><div class="ow"></div>
-            <div class="ow"></div><div class="ow"></div><div class="ow"></div>
-            <div class="ow"></div>
-        </div>
-    </button>
-    <div class="lang-badge" id="langBadge">
-        <div class="lang-dot"></div>
-        <span id="langText">Detecting…</span>
+<!-- Orb + Canvas Visualizer -->
+<div class="orb-section">
+    <div class="canvas-wrap">
+        <canvas id="vizCanvas"></canvas>
+        <button class="orb" id="orb">
+            <svg class="orb-icon" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                <line x1="12" y1="19" x2="12" y2="23"/>
+                <line x1="8" y1="23" x2="16" y2="23"/>
+            </svg>
+        </button>
     </div>
-    <div class="orb-status" id="orbStatus">Tap Start or press the orb to begin</div>
+    <div class="status-area">
+        <div class="lang-badge" id="langBadge">
+            <div class="lang-dot"></div>
+            <span id="langText">Detecting\u2026</span>
+        </div>
+        <div class="orb-status" id="orbStatus">Tap Start or press the orb to begin</div>
+    </div>
 </div>
 
+<!-- Controls -->
 <div class="controls">
     <button class="ctrl-btn btn-start" id="btnStart">&#9654;&nbsp;Start</button>
     <button class="ctrl-btn btn-stop"  id="btnStop">&#9632;&nbsp;Stop</button>
@@ -328,6 +446,9 @@ const JWT        = "{jwt}";
 const PROFILES   = {profiles_json};
 const BCP47      = {bcp47_json};
 const CAT_COLORS = {cat_colors};
+const GREETINGS  = {greetings_json};
+const LANG_NAMES_MAP = {lang_names_json};
+const SELECTED_LANG  = "{language_code}";
 
 /* ── DOM ── */
 const orb        = document.getElementById('orb');
@@ -339,6 +460,8 @@ const crisisBar  = document.getElementById('crisisBar');
 const btnStart   = document.getElementById('btnStart');
 const btnStop    = document.getElementById('btnStop');
 const btnMute    = document.getElementById('btnMute');
+const vizCanvas  = document.getElementById('vizCanvas');
+const ctx        = vizCanvas.getContext('2d');
 
 /* ── State ── */
 let recorder      = null;
@@ -348,23 +471,215 @@ let isListening   = false;
 let isProcessing  = false;
 let isMuted       = false;
 let continuous    = false;
-
-// The currently playing Audio element — so we can interrupt it instantly
 let currentAudio  = null;
+let sessionLang     = SELECTED_LANG;
+let sessionLangName = LANG_NAMES_MAP[SELECTED_LANG] || 'English';
 
-// Language state — updated by Whisper detection each turn
-let sessionLang     = 'en';
-let sessionLangName = 'English';
-
-// SpeechRecognition API — used ONLY for interrupt detection while AI speaks
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 let interruptSR   = null;
 let interruptDone = false;
 
+/* ══════════════════════════════════════════════════════════════
+   CANVAS AUDIO VISUALIZER
+   ─────────────────────────────────────────────────────────────
+   Real-time circular waveform around the orb.
+   - Listening: draws bars from mic AnalyserNode frequency data
+   - Speaking:  smooth sine waves radiating outward
+   - Thinking:  rotating particle dots
+   - Idle:      gentle breathing ring
+   ══════════════════════════════════════════════════════════════ */
+let audioCtx      = null;
+let analyser      = null;
+let micSource     = null;
+let freqData      = null;
+let vizState      = 'idle';   // idle | listening | speaking | thinking
+let vizFrame      = null;
+let vizAngle      = 0;
+let speakPhase    = 0;
+
+function initCanvas() {{
+    const dpr = window.devicePixelRatio || 1;
+    const rect = vizCanvas.getBoundingClientRect();
+    vizCanvas.width  = rect.width * dpr;
+    vizCanvas.height = rect.height * dpr;
+    ctx.scale(dpr, dpr);
+    ctx.lineCap = 'round';
+}}
+initCanvas();
+window.addEventListener('resize', initCanvas);
+
+function connectMicAnalyser(stream) {{
+    try {{
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (micSource) {{ try {{ micSource.disconnect(); }} catch(_) {{}} }}
+        micSource = audioCtx.createMediaStreamSource(stream);
+        analyser  = audioCtx.createAnalyser();
+        analyser.fftSize = 256;
+        analyser.smoothingTimeConstant = 0.75;
+        micSource.connect(analyser);
+        freqData = new Uint8Array(analyser.frequencyBinCount);
+    }} catch(e) {{ console.warn('Audio analyser init failed', e); }}
+}}
+
+function disconnectMicAnalyser() {{
+    if (micSource) {{ try {{ micSource.disconnect(); }} catch(_) {{}} micSource = null; }}
+}}
+
+function setVizState(s) {{ vizState = s; }}
+
+/* Main render loop */
+function drawViz() {{
+    vizFrame = requestAnimationFrame(drawViz);
+    const W = vizCanvas.clientWidth;
+    const H = vizCanvas.clientHeight;
+    const cx = W / 2, cy = H / 2;
+    ctx.clearRect(0, 0, W, H);
+
+    if (vizState === 'listening')       drawListeningViz(cx, cy);
+    else if (vizState === 'speaking')   drawSpeakingViz(cx, cy);
+    else if (vizState === 'thinking')   drawThinkingViz(cx, cy);
+    else                                drawIdleViz(cx, cy);
+}}
+
+/* ── Idle: gentle glowing ring ── */
+function drawIdleViz(cx, cy) {{
+    const t = Date.now() / 2000;
+    const r = 62 + Math.sin(t) * 4;
+    const alpha = 0.08 + Math.sin(t * 1.5) * 0.04;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(99,179,237,${{alpha}})`;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    // Second ring
+    const r2 = 70 + Math.cos(t * 0.8) * 3;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r2, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(79,209,197,${{alpha * 0.6}})`;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+}}
+
+/* ── Listening: real-time mic circular bars ── */
+function drawListeningViz(cx, cy) {{
+    if (analyser && freqData) {{
+        analyser.getByteFrequencyData(freqData);
+    }}
+    const bars = 64;
+    const baseR = 60;
+    const maxBarH = 42;
+    const step = (Math.PI * 2) / bars;
+
+    for (let i = 0; i < bars; i++) {{
+        const fi = freqData ? freqData[Math.floor(i * freqData.length / bars)] || 0 : 0;
+        const norm = fi / 255;
+        const h = 3 + norm * maxBarH;
+        const angle = i * step - Math.PI / 2;
+        const x1 = cx + Math.cos(angle) * baseR;
+        const y1 = cy + Math.sin(angle) * baseR;
+        const x2 = cx + Math.cos(angle) * (baseR + h);
+        const y2 = cy + Math.sin(angle) * (baseR + h);
+
+        const hue = 0 + norm * 30; // red-orange range
+        const alpha = 0.35 + norm * 0.65;
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.strokeStyle = `hsla(${{hue}},85%,${{55 + norm*20}}%,${{alpha}})`;
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+    }}
+
+    // Inner glow ring
+    const t = Date.now() / 600;
+    const avgLevel = freqData ? Array.from(freqData).reduce((a,b)=>a+b,0) / freqData.length / 255 : 0;
+    ctx.beginPath();
+    ctx.arc(cx, cy, baseR - 2, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(252,129,129,${{0.15 + avgLevel * 0.3}})`;
+    ctx.lineWidth = 1.5 + avgLevel * 2;
+    ctx.stroke();
+}}
+
+/* ── Speaking: smooth sine waves radiating outward ── */
+function drawSpeakingViz(cx, cy) {{
+    speakPhase += 0.04;
+    const rings = 3;
+    for (let r = 0; r < rings; r++) {{
+        const baseR = 62 + r * 14;
+        const points = 120;
+        const step = (Math.PI * 2) / points;
+        const alpha = 0.35 - r * 0.10;
+        const amplitude = 6 + r * 3;
+
+        ctx.beginPath();
+        for (let i = 0; i <= points; i++) {{
+            const angle = i * step;
+            const wave = Math.sin(angle * 6 + speakPhase + r * 0.8) * amplitude
+                       + Math.sin(angle * 3 - speakPhase * 0.7) * (amplitude * 0.5);
+            const rad = baseR + wave;
+            const x = cx + Math.cos(angle) * rad;
+            const y = cy + Math.sin(angle) * rad;
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+        }}
+        ctx.closePath();
+
+        const grad = ctx.createRadialGradient(cx, cy, baseR - 10, cx, cy, baseR + amplitude + 5);
+        grad.addColorStop(0, `rgba(99,179,237,${{alpha}})`);
+        grad.addColorStop(0.5, `rgba(79,209,197,${{alpha * 0.8}})`);
+        grad.addColorStop(1, `rgba(99,179,237,0)`);
+        ctx.strokeStyle = grad;
+        ctx.lineWidth = 2 - r * 0.3;
+        ctx.stroke();
+    }}
+}}
+
+/* ── Thinking: rotating particles ── */
+function drawThinkingViz(cx, cy) {{
+    vizAngle += 0.025;
+    const particles = 12;
+    const baseR = 65;
+    const step = (Math.PI * 2) / particles;
+    for (let i = 0; i < particles; i++) {{
+        const angle = vizAngle + i * step;
+        const wobble = Math.sin(Date.now() / 400 + i) * 5;
+        const r = baseR + wobble;
+        const x = cx + Math.cos(angle) * r;
+        const y = cy + Math.sin(angle) * r;
+        const size = 2.5 + Math.sin(Date.now() / 300 + i * 0.5) * 1.5;
+        const alpha = 0.3 + Math.sin(Date.now() / 350 + i) * 0.3;
+
+        ctx.beginPath();
+        ctx.arc(x, y, size, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(183,148,244,${{alpha}})`;
+        ctx.fill();
+    }}
+    // Connecting lines
+    for (let i = 0; i < particles; i++) {{
+        const a1 = vizAngle + i * step;
+        const a2 = vizAngle + ((i+1) % particles) * step;
+        const w1 = Math.sin(Date.now()/400 + i) * 5;
+        const w2 = Math.sin(Date.now()/400 + i+1) * 5;
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(a1)*(baseR+w1), cy + Math.sin(a1)*(baseR+w1));
+        ctx.lineTo(cx + Math.cos(a2)*(baseR+w2), cy + Math.sin(a2)*(baseR+w2));
+        ctx.strokeStyle = 'rgba(183,148,244,0.08)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+    }}
+}}
+
+/* Start the visualizer loop */
+drawViz();
+
 /* ── Helpers ── */
 function setStatus(t) {{ orbStatus.textContent = t; }}
-function setOrb(s)    {{ orb.classList.remove('listening','thinking','speaking'); if(s) orb.classList.add(s); }}
-function hhmm()       {{ return new Date().toLocaleTimeString([],{{hour:'2-digit',minute:'2-digit'}}); }}
+function setOrb(s) {{
+    orb.classList.remove('listening','thinking','speaking');
+    if (s) orb.classList.add(s);
+    setVizState(s || 'idle');
+}}
+function hhmm() {{ return new Date().toLocaleTimeString([],{{hour:'2-digit',minute:'2-digit'}}); }}
 
 function updateLangBadge(name, conf) {{
     const pct = conf > 0 ? ' \u00b7 ' + Math.round(conf*100) + '%' : '';
@@ -412,31 +727,41 @@ function showCrisis(tier, score) {{
     }}
 }}
 
-/* ── Dashboard sync (postMessage to parent Streamlit window) ── */
+/* ── Dashboard sync — direct DOM access + postMessage fallback ── */
 function syncDashboard(userText, reply, mhi, category, tier, langCode) {{
+    var data = {{
+        type:           'VOICE_TURN_V5',
+        user_text:      userText,
+        assistant_text: reply,
+        mhi:            mhi,
+        category:       category,
+        crisis_tier:    tier,
+        language_code:  langCode,
+        ts:             new Date().toISOString(),
+    }};
+    var payload = JSON.stringify(data);
     try {{
-        window.parent.postMessage({{
-            type:           'VOICE_TURN_V5',
-            user_text:      userText,
-            assistant_text: reply,
-            mhi:            mhi,
-            category:       category,
-            crisis_tier:    tier,
-            language_code:  langCode,
-            ts:             new Date().toISOString(),
-        }}, '*');
-    }} catch(e) {{ console.debug('syncDash', e); }}
+        var pdoc = window.parent.document;
+        var inputs = pdoc.querySelectorAll('input[type="text"]');
+        for (var i = 0; i < inputs.length; i++) {{
+            var id = inputs[i].id;
+            if (!id) continue;
+            var lbl = pdoc.querySelector('label[for="' + id + '"]');
+            if (lbl && lbl.textContent.indexOf('__vsync_v5_label__') !== -1) {{
+                var setter = Object.getOwnPropertyDescriptor(
+                    window.HTMLInputElement.prototype, 'value').set;
+                setter.call(inputs[i], payload);
+                inputs[i].dispatchEvent(new Event('input',  {{bubbles:true}}));
+                inputs[i].dispatchEvent(new Event('change', {{bubbles:true}}));
+                return;
+            }}
+        }}
+    }} catch(e) {{}}
+    try {{ window.parent.postMessage(data, '*'); }} catch(e) {{}}
 }}
 
 /* ══════════════════════════════════════════════════════════════
    INTERRUPT MECHANISM
-   ─────────────────────────────────────────────────────────────
-   While AI is speaking we keep a SpeechRecognition instance
-   running in the background purely for ONSET detection.
-   The moment the browser hears ANY audio (onstart fires),
-   we pause the current Audio element synchronously — AI stops
-   within <100ms. We then capture the full utterance with
-   MediaRecorder and process it normally.
    ══════════════════════════════════════════════════════════════ */
 
 function startInterruptWatcher() {{
@@ -449,7 +774,6 @@ function startInterruptWatcher() {{
     interruptSR.maxAlternatives = 1;
 
     interruptSR.onstart = function() {{
-        // User started speaking — stop AI immediately
         if (currentAudio && !currentAudio.paused) {{
             currentAudio.pause();
             currentAudio.currentTime = 0;
@@ -460,7 +784,6 @@ function startInterruptWatcher() {{
         if (!interruptDone) {{
             interruptDone = true;
             stopInterruptWatcher();
-            // Small buffer so MediaRecorder catches from start of speech
             setTimeout(function() {{
                 if (!isListening && !isProcessing) {{
                     setOrb('listening');
@@ -474,7 +797,7 @@ function startInterruptWatcher() {{
     interruptSR.onend   = function() {{ if (!interruptDone) stopInterruptWatcher(); }};
 
     try {{ interruptSR.start(); }}
-    catch(e) {{ /* ignore — SR may not be available */ }}
+    catch(e) {{}}
 }}
 
 function stopInterruptWatcher() {{
@@ -512,7 +835,6 @@ async function speakResponse(text, langCode, emotion, tier) {{
         const audio = new Audio(url);
         currentAudio = audio;
 
-        // Start interrupt watcher as soon as playback begins
         audio.onplay = function() {{ startInterruptWatcher(); }};
 
         await new Promise(function(resolve) {{
@@ -522,7 +844,6 @@ async function speakResponse(text, langCode, emotion, tier) {{
         }});
         URL.revokeObjectURL(url);
     }} catch(_) {{
-        // Browser TTS fallback — also interruptible via stopInterruptWatcher()
         await speakBrowserTTS(text, langCode, emotion, tier);
     }}
 
@@ -543,7 +864,6 @@ function speakBrowserTTS(text, langCode, emotion, tier) {{
 
         function go() {{
             const voices = window.speechSynthesis.getVoices();
-            // Try exact lang match first, then language prefix
             const match  = voices.find(v => v.lang === u.lang)
                         || voices.find(v => v.lang.startsWith(u.lang.split('-')[0]));
             if (match) u.voice = match;
@@ -564,13 +884,13 @@ async function transcribeBlob(blob) {{
     try {{
         const form = new FormData();
         form.append('audio', blob, 'recording.webm');
+        form.append('language', sessionLang);
         const res  = await fetch(`${{BACKEND}}/voice/transcribe`, {{
             method:  'POST',
             headers: {{'Authorization': `Bearer ${{JWT}}`}},
             body:    form,
         }});
         if (!res.ok) return null;
-        // Returns: {{ transcript, language_code, language_name, confidence }}
         return await res.json();
     }} catch(e) {{ return null; }}
 }}
@@ -598,7 +918,6 @@ async function sendChat(userText) {{
         const tier     = data.crisis_tier  || 'none';
         const score    = data.crisis_score || 0;
         const scores   = data.emotion_scores || {{}};
-        // Dominant emotion for TTS speed
         const emotion  = Object.keys(scores).length
             ? Object.keys(scores).reduce((a,b) => scores[a]>scores[b] ? a : b, 'neutral')
             : 'neutral';
@@ -612,7 +931,6 @@ async function sendChat(userText) {{
         }});
         syncDashboard(userText, reply, mhi, category, tier, sessionLang);
 
-        // Speak in the detected language
         await speakResponse(reply, sessionLang, emotion, tier);
 
         if (continuous && tier !== 'active') {{
@@ -649,12 +967,12 @@ function _startMediaRecorder() {{
     recorder.onstop = async function() {{
         isListening  = false;
         isProcessing = true;
+        disconnectMicAnalyser();
 
         const blob = new Blob(audioChunks, {{type:'audio/webm'}});
         setOrb('thinking');
         setStatus('Processing\u2026');
 
-        // ── Language-detecting STT ──
         const stt = await transcribeBlob(blob);
 
         if (!stt || !stt.transcript || !stt.transcript.trim()) {{
@@ -665,30 +983,28 @@ function _startMediaRecorder() {{
             return;
         }}
 
-        // Update session language from Whisper detection
-        sessionLang     = stt.language_code || 'en';
-        sessionLangName = stt.language_name  || 'English';
         updateLangBadge(sessionLangName, stt.confidence || 0);
 
         appendTurn('user', stt.transcript, null);
         await sendChat(stt.transcript);
     }};
 
-    recorder.start(200);  // 200ms chunks
+    recorder.start(200);
     isListening = true;
+
+    /* Connect mic to analyser for real-time visualization */
+    if (micStream) connectMicAnalyser(micStream);
+
     setOrb('listening');
     setStatus('Listening\u2026 speak naturally');
 
-    // Auto-stop after 10 s silence guard
     const autoStopTimer = setTimeout(function() {{ stopRecording(); }}, 10000);
-    // Tap orb to stop early
     orb.onclick = function() {{ clearTimeout(autoStopTimer); stopRecording(); }};
 }}
 
 async function startListening() {{
     if (isListening || isProcessing) return;
 
-    // Interrupt any ongoing AI speech
     if (currentAudio && !currentAudio.paused) {{
         currentAudio.pause();
         currentAudio = null;
@@ -696,7 +1012,6 @@ async function startListening() {{
     window.speechSynthesis.cancel();
     stopInterruptWatcher();
 
-    // Get mic if we don't have it yet
     if (!micStream) {{
         try {{
             micStream = await navigator.mediaDevices.getUserMedia({{audio: true}});
@@ -719,17 +1034,19 @@ function fullStop() {{
     if (currentAudio) {{ currentAudio.pause(); currentAudio = null; }}
     window.speechSynthesis.cancel();
     stopInterruptWatcher();
+    disconnectMicAnalyser();
     setOrb('');
     setStatus('Stopped \u2014 tap Start or orb to resume');
     isProcessing = false;
 }}
 
-/* ── Greeting ── */
+/* ── Greeting in selected language ── */
 async function greet() {{
-    const msg = "Hey, really glad you're here. This is your space \u2014 completely private and just for you. You can talk to me about anything, in any language you feel comfortable with. How are you doing today?";
+    const msg = GREETINGS[sessionLang] || GREETINGS['en'];
     appendTurn('assistant', msg, null);
+    updateLangBadge(sessionLangName, 1.0);
     if (!isMuted) {{
-        await speakResponse(msg, 'en', 'neutral', 'none');
+        await speakResponse(msg, sessionLang, 'neutral', 'none');
     }}
     if (continuous) startListening();
     else {{ setOrb(''); setStatus('Tap Start to begin talking'); }}
@@ -770,25 +1087,7 @@ greet();
 </html>"""
 
 
-# ── Inject aria-label patcher (runs in Streamlit main page) ─────────────────
-_LABEL_PATCHER = """
-<script>
-(function(){
-    function patch(){
-        var inputs = document.querySelectorAll('input[type="text"]');
-        for(var i=0;i<inputs.length;i++){
-            var lbl = document.querySelector('label[for="'+inputs[i].id+'"]');
-            if(lbl && lbl.textContent.trim().indexOf('__vsync_v5_label__') !== -1){
-                inputs[i].setAttribute('aria-label','__vsync_v5__');
-            }
-        }
-    }
-    setTimeout(patch, 300);
-    setTimeout(patch, 900);
-    setTimeout(patch, 2000);
-})();
-</script>
-"""
+
 
 
 # ── Main render ───────────────────────────────────────────────────────────────
@@ -810,9 +1109,8 @@ def render_chat(voice_enabled: bool = False) -> None:
 
     st.markdown(_CSS, unsafe_allow_html=True)
 
-    # Inject postMessage listener (main page context — not inside any iframe)
-    st.markdown(_LISTENER_SCRIPT, unsafe_allow_html=True)
-    st.markdown(_LABEL_PATCHER,   unsafe_allow_html=True)
+    # Sync bridge — runs in hidden iframe, relays postMessage to hidden input
+    components.html(_SYNC_BRIDGE, height=0)
 
     # Hidden sync input — receives VOICE_TURN_V5 payloads via JS
     raw_sync = st.text_input(
@@ -855,8 +1153,9 @@ def render_chat(voice_enabled: bool = False) -> None:
             pass
 
     # Render the voice panel
+    lang = st.session_state.get("selected_language", "en")
     components.html(
-        _build_voice_panel(BACKEND_URL, jwt),
+        _build_voice_panel(BACKEND_URL, jwt, lang),
         height=640,
         scrolling=False,
     )
