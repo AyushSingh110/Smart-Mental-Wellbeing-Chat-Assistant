@@ -10,6 +10,8 @@ This system processes a user's text or speech input through a multi-layer ML pip
 
 The architecture is designed around one core principle: **safety before helpfulness**. Crisis detection runs before the LLM is ever called. For active suicidal language, the system bypasses the LLM entirely and returns a predefined, helpline-inclusive response.
 
+The frontend has been fully migrated from Streamlit to a modern **React + TypeScript + Tailwind CSS** single-page application with Google OAuth authentication, a real-time voice interface, and a responsive dashboard.
+
 ---
 
 ## Features
@@ -33,16 +35,18 @@ The architecture is designed around one core principle: **safety before helpfuln
 - Language auto-detection via faster-whisper (supports 99 languages, runs locally)
 - Indian language TTS via gTTS with co.in accent routing
 - Emotion-matched speaking speed via pydub tempo adjustment
+- Browser-native speech-to-text via Web Speech API (any language, no server round-trip)
 - Supported Indian languages: Hindi, Bengali, Tamil, Telugu, Marathi, Gujarati, Punjabi, Kannada, Malayalam, Urdu, Odia, Assamese, Nepali, and English
 
 **Dashboard**
-- Real-time MHI trend chart with zone bands
-- Session statistics: peak/low MHI, emotion distribution, voice vs text breakdown
-- PHQ-2/GAD-2 screening integration
+- Real-time MHI trend chart with seven-day stability curve
+- Session statistics: emotion distribution, weekly check-ins, streak tracking
+- PHQ-2/GAD-2 screening integration with live score sliders
 
 **Authentication**
-- JWT-based login/registration
-- Per-user conversation history and timeline stored in MongoDB
+- Google OAuth 2.0 via `@react-oauth/google`
+- JWT tokens stored in localStorage, refreshed on page load
+- Per-user conversation history and MHI timeline stored in MongoDB
 
 ---
 
@@ -94,12 +98,21 @@ User Input (text or audio)
 ```
 ├── backend/
 │   ├── auth/
-│   │   └── auth_router.py          JWT authentication routes
+│   │   ├── auth_router.py          Google OAuth + JWT authentication routes
+│   │   └── auth_utils.py           JWT encoding, decoding, and user helpers
 │   ├── config.py                   Pydantic settings (env vars)
-│   ├── dependencies.py             FastAPI dependency injection
+│   ├── database/
+│   │   ├── mongo_client.py         Async MongoDB client (motor) with sync fallback
+│   │   └── schemas.py              Pydantic request/response models
+│   ├── dependencies.py             FastAPI dependency injection (get_current_user)
+│   ├── main.py                     FastAPI application entry point
+│   ├── models/
+│   │   ├── crisis/                 Fine-tuned DistilBERT (crisis detection)
+│   │   └── emotion/                Fine-tuned DistilBERT (emotion classification)
 │   ├── rag/
 │   │   ├── faiss_index.index       FAISS vector index (CBT knowledge)
-│   │   └── metadata.json           Chunk metadata for retrieved docs
+│   │   ├── metadata.json           Chunk metadata for retrieved docs
+│   │   └── cbt_documents/          Source CBT text documents
 │   ├── routes/
 │   │   └── routes_report.py        PDF report generation
 │   └── services/
@@ -108,38 +121,100 @@ User Input (text or audio)
 │       ├── emotion_service.py      DistilBERT emotion classification
 │       ├── history_service.py      Session history risk trend
 │       ├── intent_service.py       Intent classification
-│       ├── llm_service.py          LLM wrapper (Ollama/OpenAI)
 │       ├── matrix_service.py       MHI computation and categorization
 │       ├── multilingual_voice_service.py  Multilingual STT + TTS
 │       ├── rag_service.py          FAISS retrieval + LLM prompt builder
 │       ├── safety_service.py       Crisis override + response length control
 │       └── screening_service.py    PHQ-2 / GAD-2 normalization
-├── components/
-│   ├── chat_ui.py                  Streamlit chat panel + voice mode
-│   └── dashboard.py                MHI dashboard with trend chart
-├── models/
-│   ├── crisis/                     Fine-tuned DistilBERT (crisis)
-│   └── emotion/                    Fine-tuned DistilBERT (emotion)
-├── main.py                         FastAPI application entry point
-├── app.py                          Streamlit frontend entry point
-└── requirements.txt
+│
+├── frontend/                       React + TypeScript SPA (Vite)
+│   ├── public/
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── chat/
+│   │   │   │   ├── Composer.tsx        Message input with suggestion chips
+│   │   │   │   ├── ConversationPanel.tsx  Chat bubble timeline
+│   │   │   │   └── VoiceOrb.tsx        Browser Web Speech API voice input
+│   │   │   ├── dashboard/
+│   │   │   │   ├── EmotionPanel.tsx    Emotion signal bar chart
+│   │   │   │   ├── MetricCard.tsx      Single KPI card with accent color
+│   │   │   │   ├── SessionPanel.tsx    Recent session snapshot list
+│   │   │   │   └── TrendPanel.tsx      Seven-day MHI SVG line chart
+│   │   │   ├── layout/
+│   │   │   │   └── AppShell.tsx        Sidebar navigation + page wrapper
+│   │   │   └── shared/
+│   │   │       └── PageHeader.tsx      Reusable page eyebrow + title header
+│   │   ├── lib/
+│   │   │   ├── api.ts              All FastAPI endpoint calls (typed)
+│   │   │   └── auth.ts             AuthContext, useAuth hook, Google OAuth flow
+│   │   ├── pages/
+│   │   │   ├── ChatPage.tsx        Chat interface with voice + text
+│   │   │   ├── DashboardPage.tsx   MHI dashboard with metrics and trends
+│   │   │   ├── LoginPage.tsx       Google sign-in landing page
+│   │   │   ├── ProfilePage.tsx     User identity and account details
+│   │   │   └── SettingsPage.tsx    Preferences and account controls
+│   │   ├── types/
+│   │   │   └── index.ts            Shared TypeScript interfaces
+│   │   ├── App.tsx                 Router setup and auth-gated routes
+│   │   ├── main.tsx                React entry point
+│   │   └── styles.css              Global styles and Tailwind directives
+│   ├── .env.local                  Frontend environment variables
+│   ├── index.html
+│   ├── package.json
+│   ├── tailwind.config.js          Custom color tokens and font families
+│   ├── tsconfig.json
+│   └── vite.config.ts
+│
+├── .env                            Backend environment variables
+├── migrate_schema.py               MongoDB index and schema migration script
+├── requirements.txt                Python dependencies
+└── README.md
 ```
+
+---
+
+## Tech Stack
+
+### Backend
+| Layer | Technology |
+|---|---|
+| API framework | FastAPI + Uvicorn |
+| Database | MongoDB Atlas via Motor (async) |
+| Authentication | Google OAuth 2.0 + JWT (python-jose) |
+| Emotion/Crisis ML | DistilBERT (fine-tuned, HuggingFace Transformers) |
+| Speech-to-text | faster-whisper (local, 99 languages) |
+| Text-to-speech | gTTS (Indian accent) + pyttsx3 (offline fallback) |
+| RAG | FAISS + sentence-transformers |
+| LLM | Gemini via Google AI SDK |
+
+### Frontend
+| Layer | Technology |
+|---|---|
+| Framework | React 18 + TypeScript |
+| Build tool | Vite |
+| Styling | Tailwind CSS with custom design tokens |
+| Routing | React Router v6 |
+| Auth | @react-oauth/google |
+| Voice input | Web Speech API (browser-native, auto language detection) |
+| Icons | lucide-react |
+| HTTP client | Native fetch (typed wrappers in `src/lib/api.ts`) |
 
 ---
 
 ## Requirements
 
 - Python 3.10 or higher
+- Node.js 18 or higher
 - MongoDB Atlas account (free tier works) or local MongoDB
 - 4 GB RAM minimum (8 GB recommended for Whisper base model)
-- Internet access for gTTS (TTS only) — all other processing is local
+- Internet access for gTTS (TTS only) and Google OAuth — all other processing is local
 
 ### Model requirements
 
 The fine-tuned DistilBERT models must be present at:
 
 ```
-models/
+backend/models/
 ├── crisis/          (DistilBERT fine-tuned for crisis detection)
 └── emotion/         (DistilBERT fine-tuned for emotion classification)
 ```
@@ -157,7 +232,7 @@ git clone https://github.com/your-username/mental-wellbeing-assistant.git
 cd mental-wellbeing-assistant
 ```
 
-### Step 2 — Create a virtual environment
+### Step 2 — Backend setup
 
 ```bash
 python -m venv venv
@@ -167,52 +242,39 @@ venv\Scripts\activate
 
 # macOS / Linux
 source venv/bin/activate
-```
 
-### Step 3 — Install dependencies
-
-```bash
 pip install -r requirements.txt
 ```
 
-`requirements.txt` should contain:
+### Step 3 — Frontend setup
 
-```
-fastapi
-uvicorn
-motor
-pydantic
-pydantic-settings
-python-jose[cryptography]
-passlib[bcrypt]
-python-multipart
-sentence-transformers
-faiss-cpu
-torch
-transformers
-faster-whisper
-gtts
-pydub
-streamlit
-streamlit-extras
-plotly
-fpdf2
-requests
+```bash
+cd frontend
+npm install
 ```
 
-### Step 4 — Configure environment variables
+### Step 4 — Configure backend environment variables
 
 Create a `.env` file in the project root:
 
 ```env
 # MongoDB
-MONGO_URI=mongodb+srv://<user>:<password>@cluster.mongodb.net/?retryWrites=true
-MONGO_DB_NAME=mental_health_db
+MONGO_URI=mongodb+srv://<user>:<password>@cluster.mongodb.net/smart_mental_health?retryWrites=true&w=majority
+MONGO_DB_NAME=smart_mental_health
 
 # JWT
-JWT_SECRET_KEY=your-secret-key-at-least-32-characters
-JWT_ALGORITHM=HS256
-JWT_EXPIRE_MINUTES=1440
+JWT_SECRET=your-secret-key-at-least-32-characters
+ACCESS_TOKEN_EXPIRE_MINUTES=1440
+
+# Google OAuth
+GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-google-client-secret
+GOOGLE_REDIRECT_URI=http://localhost:8000/auth/google/callback
+FRONTEND_URL=http://localhost:5173
+
+# LLM
+GEMINI_API_KEY=your-gemini-api-key
+LLM_MODEL=gemini-2.5-flash-lite
 
 # App
 APP_NAME=Smart Mental Well-Being Assistant
@@ -220,24 +282,30 @@ APP_VERSION=2.0.0
 DEBUG=false
 
 # MHI thresholds
-CRISIS_PROBABILITY_THRESHOLD=0.55
-SAFETY_OVERRIDE_THRESHOLD=0.85
+CRISIS_PROBABILITY_THRESHOLD=0.65
+SAFETY_OVERRIDE_THRESHOLD=0.80
 
-# MHI weights (must sum to a consistent ratio, not necessarily 1.0)
-WEIGHT_EMOTION=0.25
-WEIGHT_CRISIS=0.35
-WEIGHT_SCREENING=0.15
-WEIGHT_BEHAVIORAL=0.15
-WEIGHT_HISTORY=0.10
+# MHI weights
+WEIGHT_EMOTION=0.30
+WEIGHT_CRISIS=0.25
+WEIGHT_SCREENING=0.20
+WEIGHT_BEHAVIORAL=0.10
+WEIGHT_HISTORY=0.15
 
-# Whisper model size: tiny (39 MB) | base (74 MB) | small (244 MB)
-# tiny  = fastest, good for most Indian accents
-# base  = better accuracy for heavy regional accents
-# small = best accuracy, slower on CPU
+# Whisper model size: tiny | base | small
 WHISPER_MODEL_SIZE=tiny
 ```
 
-### Step 5 — Build the RAG index
+### Step 5 — Configure frontend environment variables
+
+Create a `.env.local` file inside the `frontend/` folder:
+
+```env
+VITE_API_BASE_URL=http://localhost:8000
+VITE_GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
+```
+
+### Step 6 — Build the RAG index (optional)
 
 If you have a CBT knowledge base (text files or PDFs):
 
@@ -247,73 +315,54 @@ python scripts/build_index.py --input data/cbt_docs/ --output backend/rag/
 
 If you do not have a knowledge base yet, the RAG service will retrieve zero chunks and the LLM will respond from its own knowledge with the safety constraints still active.
 
-### Step 6 — Set up the LLM
-
-**Option A — Ollama (free, local, recommended)**
-
-```bash
-# Install Ollama from https://ollama.ai
-ollama pull llama3
-# or for a smaller model:
-ollama pull phi3
-```
-
-In `backend/services/llm_service.py`, set the Ollama endpoint:
-
-```python
-OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL_NAME  = "llama3"
-```
-
-**Option B — OpenAI API**
-
-```env
-OPENAI_API_KEY=sk-...
-```
-
 ### Step 7 — Run the backend
 
 ```bash
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-The API will be available at `http://localhost:8000`.
+The API will be available at `http://localhost:8000`.  
 Interactive API documentation is at `http://localhost:8000/docs`.
 
 ### Step 8 — Run the frontend
 
 ```bash
-streamlit run app.py
+cd frontend
+npm run dev
 ```
 
-The frontend will open in your browser at `http://localhost:8501`.
+The React app will open at `http://localhost:5173`.
+
+---
+
+## Google OAuth Setup
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com)
+2. Create a new project or select an existing one
+3. Navigate to **APIs & Services → Credentials**
+4. Click **Create Credentials → OAuth 2.0 Client ID**
+5. Set application type to **Web application**
+6. Add `http://localhost:5173` to **Authorised JavaScript origins**
+7. Add `http://localhost:8000/auth/google/callback` to **Authorised redirect URIs**
+8. Copy the **Client ID** and **Client Secret** into your `.env` and `frontend/.env.local`
 
 ---
 
 ## Multilingual Voice Setup
 
-No additional configuration is needed. The system uses:
+No additional configuration is needed. The system uses two independent voice paths:
 
-- **faster-whisper** for speech-to-text with automatic language detection
-- **gTTS** for text-to-speech with Indian accent routing
-- **pydub** for emotion-matched audio speed adjustment
+**Browser-side (VoiceOrb component)**
+- Uses the Web Speech API built into Chrome and Edge
+- Auto-detects the spoken language — no selection needed
+- Transcript is appended directly into the message composer
+- Works in Hindi, English, and most Indian languages
+- Not supported in Firefox (gracefully disabled with a status message)
 
-On first use, faster-whisper will download the Whisper model automatically (~39 MB for `tiny`). This requires an internet connection once.
-
-### How language detection works
-
-When a user speaks, faster-whisper runs one forward pass that simultaneously:
-
-1. Detects the language from the first 30 seconds of audio
-2. Transcribes the full audio in the detected language
-
-The language code (e.g., `hi` for Hindi) is then:
-
-- Returned in the `/voice/transcribe` API response
-- Passed to the LLM as a prompt instruction: "Respond in Hindi"
-- Passed to gTTS to produce speech in the correct language with the correct accent
-
-The user does not need to select a language. The system adapts automatically each turn.
+**Server-side (POST /voice/transcribe)**
+- Uses faster-whisper running locally for high-accuracy transcription
+- Supports all 99 Whisper languages including all 14 supported Indian languages
+- On first use, faster-whisper downloads the model (~39 MB for `tiny`)
 
 ### Supported Indian languages
 
@@ -338,25 +387,47 @@ The user does not need to select a language. The system adapts automatically eac
 
 ## API Reference
 
+### POST /auth/google
+
+Exchanges a Google credential token for a JWT access token.
+
+**Request**
+```json
+{ "credential": "google-id-token-here" }
+```
+
+**Response**
+```json
+{
+  "access_token": "eyJ...",
+  "token_type": "bearer",
+  "user": {
+    "email": "user@gmail.com",
+    "name": "Ayush Singh",
+    "picture": "https://..."
+  }
+}
+```
+
 ### POST /chat
 
 Processes a text message through the full ML pipeline.
 
 **Request**
 ```json
-{ "message": "I have been feeling very low lately" }
+{ "message": "I have been feeling very low lately", "language_code": "en", "source": "text" }
 ```
 
 **Response**
 ```json
 {
-    "response":       "It sounds like things have been really difficult...",
-    "emotion_scores": {"sadness": 0.72, "anxiety": 0.18, "neutral": 0.06, ...},
-    "crisis_score":   0.12,
-    "crisis_tier":    "distress",
-    "intent":         "emotional_support",
-    "mhi":            54,
-    "category":       "Moderate Distress"
+  "response":       "It sounds like things have been really difficult...",
+  "emotion_scores": {"sadness": 0.72, "anxiety": 0.18, "neutral": 0.06},
+  "crisis_score":   0.12,
+  "crisis_tier":    "distress",
+  "intent":         "emotional_support",
+  "mhi":            54,
+  "category":       "Moderate Distress"
 }
 ```
 
@@ -369,14 +440,12 @@ Transcribes audio and detects the spoken language.
 **Response**
 ```json
 {
-    "transcript":    "मुझे बहुत बुरा लग रहा है",
-    "language_code": "hi",
-    "language_name": "Hindi",
-    "confidence":    0.97
+  "transcript":    "मुझे बहुत बुरा लग रहा है",
+  "language_code": "hi",
+  "language_name": "Hindi",
+  "confidence":    0.97
 }
 ```
-
-`transcript` is empty string for silence — HTTP 200 is returned regardless.
 
 ### POST /voice/speak
 
@@ -385,14 +454,14 @@ Synthesizes speech in the specified language with Indian accent.
 **Request**
 ```json
 {
-    "text":          "यह सुनकर दुख हुआ",
-    "language_code": "hi",
-    "emotion_label": "sadness",
-    "crisis_tier":   "none"
+  "text":          "यह सुनकर दुख हुआ",
+  "language_code": "hi",
+  "emotion_label": "sadness",
+  "crisis_tier":   "none"
 }
 ```
 
-**Response**: audio/mpeg (gTTS) or audio/wav (pyttsx3 fallback)
+**Response**: `audio/mpeg` (gTTS) or `audio/wav` (pyttsx3 fallback)
 
 ### POST /assessment
 
@@ -403,15 +472,19 @@ Submits PHQ-2 and GAD-2 scores.
 { "phq2": 3, "gad2": 4 }
 ```
 
+### GET /user/dashboard-summary
+
+Returns a full snapshot for the React dashboard including MHI, emotion mix, weekly trend, and recent sessions.
+
 ### GET /user/timeline
 
-Returns MHI scores over time for the dashboard chart.
+Returns MHI scores over time for the trend chart.
 
 **Response**
 ```json
 [
-    {"timestamp": "2025-01-15T10:23:00", "mhi": 72, "category": "Mild Stress", "crisis_tier": "none"},
-    ...
+  {"timestamp": "2025-01-15T10:23:00", "mhi": 72, "category": "Mild Stress", "crisis_tier": "none"},
+  ...
 ]
 ```
 
@@ -439,15 +512,18 @@ The safety system operates in layers:
 
 ## Configuration Reference
 
-All thresholds are configurable via environment variables. Key settings:
+All thresholds are configurable via environment variables.
 
 | Variable | Default | Description |
 |---|---|---|
-| `CRISIS_PROBABILITY_THRESHOLD` | 0.55 | Score above which passive crisis template is used |
-| `SAFETY_OVERRIDE_THRESHOLD` | 0.85 | Score above which active crisis template is used |
+| `CRISIS_PROBABILITY_THRESHOLD` | 0.65 | Score above which passive crisis template is used |
+| `SAFETY_OVERRIDE_THRESHOLD` | 0.80 | Score above which active crisis template is used |
 | `WHISPER_MODEL_SIZE` | tiny | Whisper model: tiny / base / small |
-| `WEIGHT_CRISIS` | 0.35 | Crisis score weight in MHI computation |
-| `WEIGHT_EMOTION` | 0.25 | Emotion score weight in MHI computation |
+| `WEIGHT_CRISIS` | 0.25 | Crisis score weight in MHI computation |
+| `WEIGHT_EMOTION` | 0.30 | Emotion score weight in MHI computation |
+| `WEIGHT_SCREENING` | 0.20 | PHQ-2/GAD-2 weight in MHI computation |
+| `WEIGHT_BEHAVIORAL` | 0.10 | Behavioral score weight in MHI computation |
+| `WEIGHT_HISTORY` | 0.15 | Session history weight in MHI computation |
 
 ---
 
@@ -456,8 +532,9 @@ All thresholds are configurable via environment variables. Key settings:
 - The system is not a replacement for professional mental health care.
 - The LLM may occasionally produce responses that do not perfectly follow the language instruction for less common languages. Crisis responses are hardcoded in English and the detected language simultaneously for safety.
 - Whisper `tiny` model may have reduced accuracy for heavy regional accents. Use `base` or `small` via the `WHISPER_MODEL_SIZE` environment variable for better results.
+- The browser Web Speech API for voice input is only supported in Chrome and Edge. Firefox users will see a graceful fallback message.
 - gTTS requires an internet connection for TTS. The pyttsx3 fallback works offline but has limited Indian language support depending on installed OS voices.
-- The fine-tuned models in `models/crisis/` and `models/emotion/` are not included in this repository due to size. Instructions for training or obtaining them are in `docs/model_training.md`.
+- The fine-tuned models in `backend/models/crisis/` and `backend/models/emotion/` are not included in this repository due to size. Instructions for training or obtaining them are in `docs/model_training.md`.
 
 ---
 
