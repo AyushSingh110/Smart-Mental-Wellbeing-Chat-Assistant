@@ -907,7 +907,7 @@ async function sendChat(userText) {{
         const res = await fetch(`${{BACKEND}}/chat`, {{
             method:  'POST',
             headers: {{'Content-Type':'application/json','Authorization':`Bearer ${{JWT}}`}},
-            body:    JSON.stringify({{message: userText, language_code: sessionLang}}),
+            body:    JSON.stringify({{message: userText, language_code: sessionLang, source: 'voice'}}),
         }});
         if (!res.ok) throw new Error('chat-' + res.status);
 

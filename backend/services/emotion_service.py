@@ -1,16 +1,17 @@
 from __future__ import annotations
 
-import logging
 import os
 import re
+import logging
+
 import torch
 from transformers import DistilBertTokenizerFast, DistilBertForSequenceClassification
 
+from backend.config import settings
+
 logger = logging.getLogger(__name__)
 
-_LOCAL_PATH = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "models", "emotion")
-)
+_LOCAL_PATH = settings.EMOTION_MODEL_PATH
 
 # ── Canonical labels used everywhere in the pipeline
 CANONICAL_LABELS = ["stress", "anxiety", "sadness", "anger", "fear", "neutral"]
@@ -30,16 +31,24 @@ _LABEL_MAP: dict[str, str] = {
     # numeric LABEL_N fallbacks
     "label_0":    "sadness",  "label_1":   "neutral",
     "label_2":    "anger",    "label_3":   "fear",
-    "label_4":    "neutral",  "label_5":   "surprise",
+    "label_4":    "neutral",  "label_5":   "neutral",
 }
 
-_KEYWORD_RULES: list[tuple[re.Pattern, str]] = [
-    (re.compile(r"\b(sad|cry|depress|grief|loss|heartbreak)\b", re.I), "sadness"),
-    (re.compile(r"\b(anxious|anxiety|worry|worri|nervous|panic)\b", re.I), "anxiety"),
-    (re.compile(r"\b(stress|overwhelm|exhaust|burnout|pressure)\b", re.I), "stress"),
-    (re.compile(r"\b(afraid|scare|fear|terrif|dread)\b", re.I), "fear"),
-    (re.compile(r"\b(angry|anger|furious|rage|hate|frustrat)\b", re.I), "anger"),
+_KEYWORD_RULES: list[tuple[re.Pattern, str, float]] = [
+    (re.compile(r"\b(sad|cry(ing)?|depress(ed|ing)?|grief|loss|heartbreak|empty|numb|lonely|disappear)\b", re.I), "sadness", 0.46),
+    (re.compile(r"\b(anxious|anxiety|worr(y|ied|ying)|nervous|panic(king)?|restless|racing\s+thoughts?)\b", re.I), "anxiety", 0.48),
+    (re.compile(r"\b(stress(ed|ful)?|overwhelm(ed|ing)?|exhaust(ed|ing)?|burnout|pressure|drained|too\s+much)\b", re.I), "stress", 0.46),
+    (re.compile(r"\b(afraid|scared|fear(ful)?|terrif(ied|ying)?|dread|unsafe)\b", re.I), "fear", 0.50),
+    (re.compile(r"\b(angry|anger|furious|rage|hate|frustrat(ed|ing)?|irritat(ed|ing)?)\b", re.I), "anger", 0.42),
 ]
+
+_INTENSIFIERS = re.compile(
+    r"\b(very|really|extremely|so|too|super|deeply|completely|totally|constantly)\b",
+    re.I,
+)
+_NEGATIONS = re.compile(r"\b(not|never|hardly|barely|don't|cant|can't|isn't|wasn't)\b", re.I)
+_QUESTION_RE = re.compile(r"\?$")
+_HOPELESS_EMOTION = re.compile(r"\b(disappear|gone|dead|empty|numb|hopeless|pointless)\b", re.I)
 
 
 class EmotionService:
@@ -76,12 +85,13 @@ class EmotionService:
         Returns canonical emotion score dict.
         All 6 labels always present, values sum to 1.0.
         """
+        keyword_scores = self._keyword_scores(text)
         if self._loaded:
             try:
-                return self._model_predict(text)
+                return self._blend_scores(self._model_predict(text), keyword_scores, text)
             except Exception as exc:
                 logger.error("EmotionService.predict runtime error: %s", exc)
-        return self._keyword_fallback(text)
+        return keyword_scores
 
     #  Internals
     def _model_predict(self, text: str) -> dict[str, float]:
@@ -109,10 +119,75 @@ class EmotionService:
         return {k: round(v / total, 4) for k, v in scores.items()}
 
     @staticmethod
-    def _keyword_fallback(text: str) -> dict[str, float]:
-        scores = {lbl: 0.04 for lbl in CANONICAL_LABELS}
-        for pattern, label in _KEYWORD_RULES:
-            if pattern.search(text):
-                scores[label] += 0.55
+    def _keyword_scores(text: str) -> dict[str, float]:
+        lowered = text.strip().lower()
+        scores = {lbl: 0.03 for lbl in CANONICAL_LABELS}
+
+        for pattern, label, weight in _KEYWORD_RULES:
+            matches = len(pattern.findall(lowered))
+            if matches:
+                scores[label] += min(weight + (matches - 1) * 0.08, 0.68)
+
+        if _INTENSIFIERS.search(lowered):
+            top_label = max(scores, key=scores.get)
+            if top_label != "neutral":
+                scores[top_label] += 0.08
+
+        if _QUESTION_RE.search(lowered) and any(token in lowered for token in ("what if", "am i", "will i", "should i")):
+            scores["anxiety"] += 0.10
+
+        if _NEGATIONS.search(lowered) and scores["anger"] > 0.03:
+            scores["anger"] = max(0.03, scores["anger"] - 0.06)
+            scores["stress"] += 0.04
+
+        if max(scores.values()) <= 0.11:
+            scores["neutral"] += 0.62
+
         total = sum(scores.values()) or 1.0
         return {k: round(v / total, 4) for k, v in scores.items()}
+
+    @staticmethod
+    def _blend_scores(
+        model_scores: dict[str, float],
+        keyword_scores: dict[str, float],
+        text: str,
+    ) -> dict[str, float]:
+        keyword_top = max(keyword_scores, key=keyword_scores.get)
+        use_keyword_heavier = keyword_top != "neutral" and keyword_scores[keyword_top] >= 0.28
+        model_weight = 0.45 if use_keyword_heavier else 0.72
+        keyword_weight = 0.55 if use_keyword_heavier else 0.28
+
+        blended = {
+            label: model_weight * model_scores.get(label, 0.0) + keyword_weight * keyword_scores.get(label, 0.0)
+            for label in CANONICAL_LABELS
+        }
+
+        if len(text.split()) <= 3 and max(blended.values()) < 0.45:
+            blended["neutral"] += 0.20
+
+        total = sum(blended.values()) or 1.0
+        normalized = {k: round(v / total, 4) for k, v in blended.items()}
+
+        top_label = max(normalized, key=normalized.get)
+        if keyword_top != "neutral" and keyword_scores[keyword_top] >= 0.34 and (
+            normalized[top_label] < 0.42 or top_label == "neutral"
+        ):
+            normalized[keyword_top] = round(normalized[keyword_top] + 0.28, 4)
+            normalized["neutral"] = max(0.01, round(normalized["neutral"] - 0.14, 4))
+            total = sum(normalized.values()) or 1.0
+            normalized = {k: round(v / total, 4) for k, v in normalized.items()}
+            top_label = max(normalized, key=normalized.get)
+
+        if top_label != "neutral" and normalized[top_label] < 0.34:
+            normalized["neutral"] = round(normalized["neutral"] + 0.18, 4)
+            total = sum(normalized.values()) or 1.0
+            normalized = {k: round(v / total, 4) for k, v in normalized.items()}
+
+        if _HOPELESS_EMOTION.search(text) and normalized["sadness"] >= 0.18 and normalized["anger"] > normalized["sadness"]:
+            shift = min(0.16, normalized["anger"] - normalized["sadness"] + 0.02)
+            normalized["anger"] = round(max(0.01, normalized["anger"] - shift), 4)
+            normalized["sadness"] = round(normalized["sadness"] + shift, 4)
+            total = sum(normalized.values()) or 1.0
+            normalized = {k: round(v / total, 4) for k, v in normalized.items()}
+
+        return normalized

@@ -1,12 +1,58 @@
+#mongo_client.py
 from __future__ import annotations
 
 import logging
+from typing import Any
 
-from motor.motor_asyncio import AsyncIOMotorClient
+try:
+    from motor.motor_asyncio import AsyncIOMotorClient
+    _HAS_MOTOR = True
+except ImportError:  # pragma: no cover - depends on local env
+    from pymongo import MongoClient as SyncMongoClient
+
+    AsyncIOMotorClient = None
+    _HAS_MOTOR = False
 
 from backend.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+class _SyncCursorAdapter:
+    def __init__(self, cursor):
+        self._cursor = cursor
+
+    def sort(self, *args, **kwargs):
+        self._cursor = self._cursor.sort(*args, **kwargs)
+        return self
+
+    def limit(self, value: int):
+        self._cursor = self._cursor.limit(value)
+        return self
+
+    async def to_list(self, length: int | None = None) -> list[dict]:
+        docs = list(self._cursor)
+        return docs if length is None else docs[:length]
+
+
+class _SyncCollectionAdapter:
+    def __init__(self, collection):
+        self._collection = collection
+
+    async def create_index(self, *args, **kwargs):
+        return self._collection.create_index(*args, **kwargs)
+
+    async def find_one(self, *args, **kwargs):
+        return self._collection.find_one(*args, **kwargs)
+
+    async def insert_one(self, *args, **kwargs):
+        return self._collection.insert_one(*args, **kwargs)
+
+    async def update_one(self, *args, **kwargs):
+        return self._collection.update_one(*args, **kwargs)
+
+    def find(self, *args, **kwargs):
+        return _SyncCursorAdapter(self._collection.find(*args, **kwargs))
 
 
 class Database:
@@ -20,16 +66,33 @@ class Database:
     def __init__(self) -> None:
         # TLS is auto-enabled for mongodb+srv:// URIs;
         # for local mongodb:// URIs, TLS is off by default.
-        self.client = AsyncIOMotorClient(
-            settings.MONGO_URI,
-            serverSelectionTimeoutMS=15000,
-            connectTimeoutMS=10000,
-            maxPoolSize=10,
-        )
-        self.db = self.client[settings.MONGO_DB_NAME]
-        self.users = self.db["users"]
-        self.conversations = self.db["conversations"]
-        self.assessments = self.db["assessments"]
+        if _HAS_MOTOR:
+            self.client = AsyncIOMotorClient(
+                settings.MONGO_URI,
+                serverSelectionTimeoutMS=15000,
+                connectTimeoutMS=10000,
+                maxPoolSize=10,
+                connect=False,
+            )
+            db_handle = self.client[settings.MONGO_DB_NAME]
+            self.db = db_handle
+            self.users = db_handle["users"]
+            self.conversations = db_handle["conversations"]
+            self.assessments = db_handle["assessments"]
+        else:
+            self.client = SyncMongoClient(
+                settings.MONGO_URI,
+                serverSelectionTimeoutMS=15000,
+                connectTimeoutMS=10000,
+                maxPoolSize=10,
+                connect=False,
+            )
+            db_handle = self.client[settings.MONGO_DB_NAME]
+            self.db = db_handle
+            self.users = _SyncCollectionAdapter(db_handle["users"])
+            self.conversations = _SyncCollectionAdapter(db_handle["conversations"])
+            self.assessments = _SyncCollectionAdapter(db_handle["assessments"])
+            logger.warning("motor not installed; using pymongo compatibility mode")
 
     # -- Lifecycle -------------------------------------------------------------
 

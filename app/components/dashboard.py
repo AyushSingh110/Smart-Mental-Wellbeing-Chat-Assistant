@@ -267,7 +267,6 @@ def _gauge(mhi: float) -> None:
                 "ticktext": ["0", "16", "32", "50", "66", "82", "100"],
                 "tickcolor": "#7388a6",
                 "tickfont":  {"color": "#8ea0b8", "size": 9, "family": "Sora"},
-                "linecolor": "rgba(255,255,255,.05)",
             },
             "bar":      {"color": color, "thickness": 0.24},
             "bgcolor":  "rgba(0,0,0,0)",

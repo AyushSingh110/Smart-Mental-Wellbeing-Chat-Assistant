@@ -21,7 +21,11 @@ from backend.database.schemas import (
     SpeakRequest,
 )
 from backend.dependencies import get_current_user
-from backend.routes.routes_report import router as report_router
+
+try:
+    from backend.routes.routes_report import router as report_router
+except Exception as exc:  # pragma: no cover - depends on optional libs
+    report_router = None
 
 from backend.services.emotion_service import EmotionService
 from backend.services.crisis_service import CrisisService
@@ -88,6 +92,8 @@ app = FastAPI(
 _ALLOWED_ORIGINS = [
     "http://localhost:8501",
     "http://127.0.0.1:8501",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
     settings.FRONTEND_URL,
     "null",
 ]
@@ -112,7 +118,10 @@ app.add_middleware(
 
 # Routers — registered AFTER middleware
 app.include_router(auth_router)
-app.include_router(report_router)
+if report_router is not None:
+    app.include_router(report_router)
+else:
+    logger.warning("Report routes disabled because optional report dependencies are unavailable")
 
 
 # Thread-pool helper
@@ -131,6 +140,7 @@ async def _run_in_thread(fn, *args, **kwargs):
 async def _persist(
     user_id,
     message: str,
+    response: str,
     emotion_scores: dict,
     crisis_score: float,
     crisis_tier: str,
@@ -140,12 +150,15 @@ async def _persist(
     intent: str,
     mhi: float,
     category: str,
+    language_code: str,
+    source: str = "text",
 ) -> None:
     """Saves one conversation turn to MongoDB. Used by all /chat exit paths."""
     await db.conversations.insert_one({
         "user_id":          user_id,
         "timestamp":        datetime.utcnow(),
         "message":          message,
+        "response":         response,
         "emotion_scores":   emotion_scores,
         "crisis_score":     round(crisis_score, 4),
         "crisis_tier":      crisis_tier,
@@ -155,7 +168,10 @@ async def _persist(
         "intent":           intent,
         "mhi":              int(mhi),
         "category":         category,
+        "language_code":    language_code,
+        "source":           source,
     })
+    await db.update_latest_mhi(user_id, int(mhi))
 
 
 
@@ -233,14 +249,23 @@ async def chat(
     user_id: ObjectId = Depends(get_current_user),
 ):
     # Step 1: ML inference — offloaded to thread pool
-    emotion_scores   = await _run_in_thread(emotion_service.predict, body.message)
+    (
+        emotion_scores,
+        crisis_score,
+        crisis_tier,
+        intent,
+        history_score,
+        history_snapshot,
+    ) = await asyncio.gather(
+        _run_in_thread(emotion_service.predict, body.message),
+        _run_in_thread(crisis_service.predict, body.message),
+        _run_in_thread(crisis_service.classify_tier, body.message),
+        _run_in_thread(intent_service.predict, body.message),
+        history_service.compute(user_id),
+        history_service.get_recent_snapshot(user_id),
+    )
     emotion_label    = max(emotion_scores, key=emotion_scores.get)
     emotion_score    = emotion_scores[emotion_label]
-
-    crisis_score     = await _run_in_thread(crisis_service.predict,       body.message)
-    crisis_tier      = await _run_in_thread(crisis_service.classify_tier, body.message)
-
-    intent           = await _run_in_thread(intent_service.predict, body.message)
     behavioral_score = behavioral_service.predict(body.message)     # pure regex — fast
 
     logger.debug(
@@ -248,9 +273,6 @@ async def chat(
         body.message[:60], emotion_label, emotion_score,
         crisis_score, crisis_tier, behavioral_score,
     )
-
-    # Step 2: Async DB-dependent scoring
-    history_score = await history_service.compute(user_id)
 
     user_doc = await db.users.find_one(
         {"_id": user_id},
@@ -270,6 +292,8 @@ async def chat(
         history_score    = history_score,
         crisis_tier      = crisis_tier,
         raw_text         = body.message,
+        recent_emotions  = history_snapshot.get("recent_emotions"),
+        mhi_trend        = history_snapshot.get("recent_mhi"),
     )
     category = matrix_service.categorize(mhi, crisis_score, crisis_tier)
 
@@ -294,8 +318,9 @@ async def chat(
             llm_failed   = False,
         )
         await _persist(
-            user_id, body.message, emotion_scores, crisis_score, crisis_tier,
+            user_id, body.message, final_response, emotion_scores, crisis_score, crisis_tier,
             behavioral_score, screening_score, history_score, intent, mhi, category,
+            body.language_code, body.source,
         )
         return ChatResponse(
             response=final_response, emotion_scores=emotion_scores,
@@ -318,8 +343,9 @@ async def chat(
             llm_failed   = False,
         )
         await _persist(
-            user_id, body.message, emotion_scores, crisis_score, crisis_tier,
+            user_id, body.message, final_response, emotion_scores, crisis_score, crisis_tier,
             behavioral_score, screening_score, history_score, intent, mhi, category,
+            body.language_code, body.source,
         )
         return ChatResponse(
             response=final_response, emotion_scores=emotion_scores,
@@ -339,6 +365,7 @@ async def chat(
         crisis_tier,
         category,
         body.language_code,
+        history_snapshot.get("conversation_pairs"),
     )
 
     # Step 6: Safety validation + length trim
@@ -352,8 +379,9 @@ async def chat(
 
     # Step 7: Persist to MongoDB
     await _persist(
-        user_id, body.message, emotion_scores, crisis_score, crisis_tier,
+        user_id, body.message, final_response, emotion_scores, crisis_score, crisis_tier,
         behavioral_score, screening_score, history_score, intent, mhi, category,
+        body.language_code, body.source,
     )
 
     return ChatResponse(
@@ -510,6 +538,7 @@ async def user_history(
     docs = await cursor.to_list(length=limit)
     for d in docs:
         d.pop("_id", None)
+        d.pop("user_id", None)
     return {"count": len(docs), "conversations": docs}
 
 
@@ -524,9 +553,83 @@ async def user_timeline(
         db.conversations
         .find(
             {"user_id": user_id},
-            {"timestamp": 1, "mhi": 1, "category": 1, "crisis_tier": 1, "_id": 0},
+            {
+                "timestamp": 1,
+                "mhi": 1,
+                "category": 1,
+                "crisis_tier": 1,
+                "language_code": 1,
+                "source": 1,
+                "_id": 0,
+            },
         )
         .sort("timestamp", 1)
         .limit(limit)
     )
     return await cursor.to_list(length=limit)
+
+
+@app.get("/user/dashboard-summary", summary="Authenticated dashboard summary")
+async def user_dashboard_summary(
+    user_id: ObjectId = Depends(get_current_user),
+):
+    user = await db.users.find_one({"_id": user_id}) or {}
+    recent = await db.get_recent_conversations(user_id, limit=7)
+    recent_sorted = sorted(recent, key=lambda item: item.get("timestamp") or datetime.utcnow())
+
+    latest_mhi = int(
+        (recent_sorted[-1].get("mhi") if recent_sorted else None)
+        or user.get("latest_mhi")
+        or user.get("baseline_mhi", 75)
+    )
+    category = (
+        recent_sorted[-1].get("category")
+        if recent_sorted
+        else matrix_service.categorize(latest_mhi, 0.0, "none")
+    )
+    weekly_trend = [int(entry.get("mhi", latest_mhi)) for entry in recent_sorted][-7:]
+    if not weekly_trend:
+        weekly_trend = [latest_mhi]
+
+    emotion_totals: dict[str, float] = {}
+    for entry in recent_sorted:
+        for label, value in (entry.get("emotion_scores") or {}).items():
+            emotion_totals[label] = emotion_totals.get(label, 0.0) + float(value)
+
+    if emotion_totals:
+        total = sum(emotion_totals.values()) or 1.0
+        emotion_mix = [
+            {"label": label.replace("_", " ").title(), "value": round((score / total) * 100)}
+            for label, score in sorted(emotion_totals.items(), key=lambda item: item[1], reverse=True)[:5]
+        ]
+    else:
+        emotion_mix = [{"label": "Calm", "value": 100}]
+
+    recent_sessions = []
+    for index, entry in enumerate(reversed(recent_sorted[-5:]), start=1):
+        recent_sessions.append(
+            {
+                "id": str(index),
+                "time": (entry.get("timestamp") or datetime.utcnow()).isoformat(),
+                "summary": (entry.get("message") or "")[:140] or "Well-being check-in",
+                "mood": max((entry.get("emotion_scores") or {"calm": 1}).items(), key=lambda kv: kv[1])[0].replace("_", " ").title(),
+                "mhi": int(entry.get("mhi", latest_mhi)),
+            }
+        )
+
+    return {
+        "displayName": user.get("name") or user.get("email", "User").split("@")[0].title(),
+        "email": user.get("email", ""),
+        "latestMhi": latest_mhi,
+        "category": category,
+        "checkInsThisWeek": len(recent_sorted),
+        "streakDays": min(len(recent_sorted), 30),
+        "voiceEnabled": True,
+        "weeklyTrend": weekly_trend,
+        "emotionMix": emotion_mix,
+        "recentSessions": recent_sessions,
+        "assessment": {
+            "phq2": int(user.get("phq2_total", 0)),
+            "gad2": int(user.get("gad2_total", 0)),
+        },
+    }

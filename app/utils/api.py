@@ -1,4 +1,3 @@
-#api.py
 import requests
 import streamlit as st
 
@@ -14,14 +13,12 @@ def _get_headers():
     }
 
 # Chat
-def send_chat(message: str) -> dict:
-    headers = {
-        "Authorization": f"Bearer {st.session_state.jwt}"
-    }
+def send_chat(message: str, language_code: str = "en", source: str = "text") -> dict:
+    headers = _get_headers()
 
     response = requests.post(
         f"{BACKEND_URL}/chat",
-        json={"message": message},
+        json={"message": message, "language_code": language_code, "source": source},
         headers=headers,
         timeout=20
     )
@@ -44,6 +41,7 @@ def submit_assessment(phq2: int, gad2: int):
     )
 
     response.raise_for_status()
+    return response.json()
 
 # PDF Report
 def get_report():

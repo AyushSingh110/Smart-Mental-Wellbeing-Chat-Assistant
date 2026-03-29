@@ -2,12 +2,14 @@ import faiss
 import numpy as np
 import json
 from sentence_transformers import SentenceTransformer
-from chunker import load_and_chunk_documents
+
+from backend.config import settings
+from backend.rag.chunker import load_and_chunk_documents
 
 MODEL_NAME = "all-MiniLM-L6-v2"
-DOC_PATH = "backend/rag/cbt_documents"
-INDEX_PATH = "backend/rag/faiss_index.index"
-METADATA_PATH = "backend/rag/metadata.json"
+DOC_PATH = settings.RAG_DOCUMENTS_PATH
+INDEX_PATH = settings.FAISS_INDEX_PATH
+METADATA_PATH = settings.RAG_METADATA_PATH
 
 def build_faiss_index():
 

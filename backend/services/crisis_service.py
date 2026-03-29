@@ -1,16 +1,19 @@
 from __future__ import annotations
 
-import logging
 import os
 import re
+import logging
+
 import torch
 from transformers import DistilBertTokenizerFast, DistilBertForSequenceClassification
+
+from backend.config import settings
 
 logger = logging.getLogger(__name__)
 
 # Model path 
 _LOCAL_PATH = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "models", "crisis")
+    settings.CRISIS_MODEL_PATH
 )
 
 # Active suicidal intent patterns — hard floor 0.90 
@@ -106,7 +109,17 @@ class CrisisService:
     def classify_tier(self, text: str) -> str:
         """Returns 'active' | 'passive' | 'distress' | 'none'"""
         _, tier = self._rule_score(text)
-        return tier
+        if tier != "none":
+            return tier
+
+        model_score = self._model_score(text)
+        if model_score >= settings.SAFETY_OVERRIDE_THRESHOLD:
+            return "active"
+        if model_score >= settings.CRISIS_PROBABILITY_THRESHOLD:
+            return "passive"
+        if model_score >= 0.30:
+            return "distress"
+        return "none"
 
     # Internals 
 

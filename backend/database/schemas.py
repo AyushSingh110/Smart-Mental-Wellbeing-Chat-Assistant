@@ -11,6 +11,7 @@ from pydantic import BaseModel
 class ChatRequest(BaseModel):
     message: str
     language_code: str = "en"
+    source: str = "text"
 
 
 class ChatResponse(BaseModel):

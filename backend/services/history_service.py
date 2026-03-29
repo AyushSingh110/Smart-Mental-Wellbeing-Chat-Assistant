@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from typing import Any
+
 from bson import ObjectId
-from motor.motor_asyncio import AsyncIOMotorCollection
 
 
 # Number of recent sessions used for trend calculation
@@ -13,7 +14,7 @@ _DECAY = 0.8
 
 class HistoryService:
 
-    def __init__(self, conversations_col: AsyncIOMotorCollection):
+    def __init__(self, conversations_col: Any):
         self.col = conversations_col
 
     async def compute(self, user_id: ObjectId) -> float:
@@ -78,3 +79,37 @@ class HistoryService:
         if delta < -5:
             return "declining"
         return "stable"
+
+    async def get_recent_snapshot(self, user_id: ObjectId, *, limit: int = 4) -> dict[str, list]:
+        cursor = (
+            self.col.find(
+                {"user_id": user_id},
+                {"message": 1, "response": 1, "emotion_scores": 1, "mhi": 1, "timestamp": 1, "_id": 0},
+            )
+            .sort("timestamp", -1)
+            .limit(limit)
+        )
+
+        docs = await cursor.to_list(length=limit)
+        docs.reverse()
+
+        recent_emotions: list[str] = []
+        recent_mhi: list[float] = []
+        conversation_pairs: list[dict[str, str]] = []
+
+        for doc in docs:
+            emotion_scores = doc.get("emotion_scores") or {}
+            if emotion_scores:
+                recent_emotions.append(max(emotion_scores, key=emotion_scores.get))
+            if "mhi" in doc:
+                recent_mhi.append(float(doc["mhi"]))
+            conversation_pairs.append({
+                "user": str(doc.get("message", "")),
+                "assistant": str(doc.get("response", "")),
+            })
+
+        return {
+            "recent_emotions": recent_emotions,
+            "recent_mhi": recent_mhi,
+            "conversation_pairs": conversation_pairs,
+        }

@@ -106,3 +106,9 @@ docker-compose.override.yml
 # ==========================
 *.sqlite3
 *.db
+
+# ==========================
+# Frontend
+# ==========================
+node_modules/
+frontend/dist/
