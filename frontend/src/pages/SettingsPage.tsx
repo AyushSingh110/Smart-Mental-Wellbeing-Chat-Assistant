@@ -1,107 +1,262 @@
-import { Bell, Mic2, ShieldHalf, WandSparkles } from "lucide-react";
-
+import { useState } from "react";
+import { Bell, Mic2, ShieldHalf, WandSparkles, ChevronRight, Check } from "lucide-react";
 import { PageHeader } from "../components/shared/PageHeader";
 
-const settingsGroups = [
+type ToggleState = Record<string, boolean>;
+
+const SETTINGS_GROUPS = [
   {
-    title: "Privacy and access",
-    icon: <ShieldHalf className="h-5 w-5" />,
-    description:
-      "Session retention, export controls, and account-linked authentication rules.",
-    status: "Protected",
-    helper: "Core privacy expectations are clearly framed for the user.",
+    id:          "privacy",
+    title:       "Privacy and access",
+    icon:        ShieldHalf,
+    description: "Session retention, export controls, and account-linked authentication rules.",
+    status:      "Protected",
+    statusColor: "#7be495",
+    toggle: {
+      label:   "Retain session history",
+      default: true,
+    },
   },
   {
-    title: "Voice assistant",
-    icon: <Mic2 className="h-5 w-5" />,
-    description:
-      "Speech preferences, preferred language, voice playback, and audio device behavior.",
-    status: "Ready",
-    helper: "Reserved space for future voice preferences without noisy controls today.",
+    id:          "voice",
+    title:       "Voice assistant",
+    icon:        Mic2,
+    description: "Speech preferences, preferred language, voice playback, and audio device behavior.",
+    status:      "Ready",
+    statusColor: "#6ce3cf",
+    toggle: {
+      label:   "Enable voice input",
+      default: true,
+    },
   },
   {
-    title: "Notifications",
-    icon: <Bell className="h-5 w-5" />,
-    description:
-      "Gentle reminders for check-ins, progress summaries, and report readiness.",
-    status: "Calm",
-    helper: "Reminder language should stay supportive and low-pressure.",
+    id:          "notifications",
+    title:       "Notifications",
+    icon:        Bell,
+    description: "Gentle reminders for check-ins, progress summaries, and report readiness.",
+    status:      "Calm",
+    statusColor: "#ffc96b",
+    toggle: {
+      label:   "Enable check-in reminders",
+      default: false,
+    },
   },
   {
-    title: "AI behavior",
-    icon: <WandSparkles className="h-5 w-5" />,
-    description:
-      "Tone preferences, follow-up depth, and future personalization controls.",
-    status: "Thoughtful",
-    helper: "Tone and follow-up depth can evolve without changing the current backend.",
+    id:          "ai",
+    title:       "AI behaviour",
+    icon:        WandSparkles,
+    description: "Tone preferences, follow-up depth, and future personalization controls.",
+    status:      "Thoughtful",
+    statusColor: "#a78bfa",
+    toggle: {
+      label:   "Adaptive tone responses",
+      default: true,
+    },
   },
-];
+] as const;
 
 export function SettingsPage() {
+  const [toggles, setToggles] = useState<ToggleState>(
+    Object.fromEntries(SETTINGS_GROUPS.map((g) => [g.id, g.toggle.default])),
+  );
+
+  function flip(id: string) {
+    setToggles((prev) => ({ ...prev, [id]: !prev[id] }));
+  }
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHeader
         eyebrow="Settings"
-        title="A dedicated settings surface that feels intentional and uncluttered"
-        description="Preferences are grouped by user need, with a calmer structure that avoids overwhelming people who may already be under stress."
+        title="Preferences and controls"
+        description="Grouped by need, kept simple — so adjusting your workspace never adds stress."
       />
 
-      <section className="grid gap-4 lg:grid-cols-2">
-        {settingsGroups.map((group) => (
-          <article
-            key={group.title}
-            className="surface-card animate-rise-in rounded-[28px] border border-white/10 p-6 shadow-halo"
-          >
-            <div className="inline-flex rounded-2xl bg-brand-400/12 p-3 text-brand-300">{group.icon}</div>
-            <div className="mt-4 flex items-center justify-between gap-4">
-              <h3 className="font-display text-xl font-semibold text-white">{group.title}</h3>
-              <span className="rounded-full border border-white/10 px-3 py-1 text-sm text-slate-300">
-                {group.status}
-              </span>
-            </div>
-            <p className="mt-3 text-sm leading-7 text-slate-400">{group.description}</p>
-            <div className="mt-6 rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-3 text-sm text-slate-300">
-              {group.helper}
-            </div>
-          </article>
-        ))}
+      {/* Settings cards */}
+      <section className="grid gap-3 lg:grid-cols-2">
+        {SETTINGS_GROUPS.map((group) => {
+          const Icon    = group.icon;
+          const isOn    = toggles[group.id];
+
+          return (
+            <article
+              key={group.id}
+              className="rounded-[20px] p-5 transition-all duration-200"
+              style={{
+                background: "rgba(255,255,255,0.028)",
+                border: "1px solid rgba(255,255,255,0.07)",
+              }}
+            >
+              {/* Header row */}
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px]"
+                    style={{ background: `${group.statusColor}12` }}
+                  >
+                    <Icon className="h-4 w-4" style={{ color: group.statusColor }} />
+                  </div>
+                  <div>
+                    <h3
+                      className="text-[15px] font-semibold text-white"
+                      style={{ fontFamily: "'Space Grotesk', sans-serif" }}
+                    >
+                      {group.title}
+                    </h3>
+                    <span
+                      className="text-[11px] font-medium"
+                      style={{ color: group.statusColor }}
+                    >
+                      {group.status}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Status dot */}
+                <div
+                  className="mt-1 h-2 w-2 shrink-0 rounded-full"
+                  style={{
+                    background: isOn ? group.statusColor : "rgba(255,255,255,0.1)",
+                    boxShadow: isOn ? `0 0 6px ${group.statusColor}` : "none",
+                    transition: "all 0.3s",
+                  }}
+                />
+              </div>
+
+              {/* Description */}
+              <p className="mt-3 text-[12px] leading-relaxed text-slate-500">
+                {group.description}
+              </p>
+
+              {/* Toggle row */}
+              <div
+                className="mt-4 flex items-center justify-between rounded-[12px] px-3 py-3"
+                style={{
+                  background: "rgba(255,255,255,0.02)",
+                  border: "1px solid rgba(255,255,255,0.05)",
+                }}
+              >
+                <span className="text-[12px] text-slate-400">{group.toggle.label}</span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={isOn}
+                  onClick={() => flip(group.id)}
+                  className="relative h-5 w-9 rounded-full transition-all duration-300 focus:outline-none"
+                  style={{
+                    background: isOn ? group.statusColor : "rgba(255,255,255,0.1)",
+                  }}
+                >
+                  <span
+                    className="absolute top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-white transition-all duration-300"
+                    style={{ left: isOn ? "calc(100% - 18px)" : "2px" }}
+                  >
+                    {isOn && <Check className="h-2.5 w-2.5 text-[#09111f]" strokeWidth={3} />}
+                  </span>
+                </button>
+              </div>
+            </article>
+          );
+        })}
       </section>
 
-      <section className="surface-card animate-rise-in rounded-[28px] border border-white/10 p-6 shadow-halo">
-        <p className="text-xs uppercase tracking-[0.28em] text-slate-500">Design direction</p>
-        <h3 className="mt-2 font-display text-xl font-semibold text-white">
-          Principles behind this settings layout
+      {/* Principles section */}
+      <section
+        className="rounded-[20px] p-5"
+        style={{
+          background: "rgba(255,255,255,0.022)",
+          border: "1px solid rgba(255,255,255,0.06)",
+        }}
+      >
+        <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-500">
+          Design principles
+        </p>
+        <h3
+          className="mt-1.5 text-[16px] font-semibold text-white"
+          style={{ fontFamily: "'Space Grotesk', sans-serif" }}
+        >
+          How this settings page is built
         </h3>
-        <div className="mt-6 grid gap-4 md:grid-cols-3">
-          <PrincipleCard
-            title="Less cognitive load"
-            description="Fewer moving parts and simpler labels make the page easier to process."
-          />
-          <PrincipleCard
-            title="Honest states"
-            description="The UI avoids fake controls that imply persistence where none exists yet."
-          />
-          <PrincipleCard
-            title="Ready to extend"
-            description="Visual structure is ready for future wiring without forcing backend changes now."
-          />
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+          {[
+            {
+              title: "Less cognitive load",
+              text:  "Fewer moving parts and simpler labels make the page easier to process.",
+              color: "#6ce3cf",
+            },
+            {
+              title: "Honest states",
+              text:  "Controls show real state and avoid fake toggles that don't persist yet.",
+              color: "#ffc96b",
+            },
+            {
+              title: "Ready to extend",
+              text:  "Structure is ready for future wiring without forcing backend changes now.",
+              color: "#a78bfa",
+            },
+          ].map((item) => (
+            <div
+              key={item.title}
+              className="rounded-[14px] p-4"
+              style={{
+                background: `${item.color}06`,
+                border: `1px solid ${item.color}14`,
+              }}
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <ChevronRight className="h-3.5 w-3.5" style={{ color: item.color }} />
+                <p
+                  className="text-[13px] font-semibold"
+                  style={{ fontFamily: "'Space Grotesk', sans-serif", color: item.color }}
+                >
+                  {item.title}
+                </p>
+              </div>
+              <p className="text-[12px] leading-relaxed text-slate-500">{item.text}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Danger zone */}
+      <section
+        className="rounded-[20px] p-5"
+        style={{
+          background: "rgba(255,123,112,0.04)",
+          border: "1px solid rgba(255,123,112,0.12)",
+        }}
+      >
+        <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[#ff7b70]/60">
+          Account actions
+        </p>
+        <h3
+          className="mt-1.5 text-[15px] font-semibold text-white"
+          style={{ fontFamily: "'Space Grotesk', sans-serif" }}
+        >
+          Data and account
+        </h3>
+        <p className="mt-2 text-[12px] leading-relaxed text-slate-500">
+          Export your full history or permanently delete your account and all associated data.
+          These actions cannot be undone.
+        </p>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button
+            type="button"
+            className="rounded-[10px] px-4 py-2 text-[12px] font-medium text-slate-400 transition-all hover:text-white"
+            style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
+          >
+            Export my data
+          </button>
+          <button
+            type="button"
+            className="rounded-[10px] px-4 py-2 text-[12px] font-medium text-[#ff7b70]/80 transition-all hover:text-[#ff7b70]"
+            style={{ background: "rgba(255,123,112,0.06)", border: "1px solid rgba(255,123,112,0.16)" }}
+          >
+            Delete account
+          </button>
         </div>
       </section>
     </div>
-  );
-}
-
-function PrincipleCard({
-  title,
-  description,
-}: {
-  title: string;
-  description: string;
-}) {
-  return (
-    <article className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
-      <h4 className="font-display text-lg font-semibold text-white">{title}</h4>
-      <p className="mt-2 text-sm leading-7 text-slate-400">{description}</p>
-    </article>
   );
 }
