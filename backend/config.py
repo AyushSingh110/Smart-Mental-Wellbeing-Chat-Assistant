@@ -35,6 +35,15 @@ class Settings(BaseSettings):
     # -- API Keys --------------------------------------------------------------
     GEMINI_API_KEY: str = ""
     OPENAI_API_KEY: str = ""
+    ELEVENLABS_API_KEY: str = ""
+    ELEVENLABS_MODEL: str = "eleven_multilingual_v2"
+
+    # -- Avatar / Language -----------------------------------------------------
+    # Avatar voice IDs on ElevenLabs (free tier voices)
+    ELEVENLABS_VOICE_THERAPIST: str = "pNInz6obpgDQGcFmaJgB"   # Adam – calm male
+    ELEVENLABS_VOICE_COMPANION: str = "EXAVITQu4vr4xnSDxMaL"   # Bella – warm female
+    ELEVENLABS_VOICE_GUIDE:     str = "AZnzlk1XvdvUeBnXmlld"   # Domi – neutral
+    ELEVENLABS_VOICE_ELDER:     str = "onwK4e9ZLuTAKqWW03F9"   # Daniel – elder
 
     # -- Google OAuth -----------------------------------------------------------
     GOOGLE_CLIENT_ID: str = Field(default="")
@@ -71,6 +80,12 @@ class Settings(BaseSettings):
     RAG_TOP_K: int = 3
     RAG_CHUNK_SIZE: int = 512
     RAG_CHUNK_OVERLAP: int = 64
+
+    # -- MuseTalk (optional GPU lip-sync) -------------------------------------
+    MUSETALK_ENABLED: bool = False
+    MUSETALK_MODEL_PATH: str = str(_BASE_DIR / "backend" / "models" / "musetalk")
+    AVATAR_VIDEO_CACHE_DIR: str = str(_BASE_DIR / "backend" / "static" / "avatar_videos")
+    PERSONA_STATIC_DIR: str = str(_BASE_DIR / "backend" / "static" / "personas")
 
     model_config = SettingsConfigDict(
         env_file=".env",

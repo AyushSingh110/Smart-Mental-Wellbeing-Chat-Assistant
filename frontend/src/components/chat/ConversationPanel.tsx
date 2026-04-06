@@ -1,17 +1,37 @@
 import { useEffect, useRef } from "react";
 import clsx from "clsx";
 import type { ConversationEntry } from "../../types";
+import { CBTCard } from "./CBTCard";
 
 type ConversationPanelProps = {
   entries: ConversationEntry[];
+  onOpenCBT?: (technique: string) => void;
+  languageCode?: string;
+  whisperConfidence?: number;  // 0-1, from STT result
 };
 
-export function ConversationPanel({ entries }: ConversationPanelProps) {
+const LANG_NAMES: Record<string, string> = {
+  hi: "Hindi", bn: "Bengali", ta: "Tamil", te: "Telugu", mr: "Marathi",
+  gu: "Gujarati", pa: "Punjabi", kn: "Kannada", ml: "Malayalam", ur: "Urdu",
+  or: "Odia", as: "Assamese", ne: "Nepali", sa: "Sanskrit", en: "English",
+};
+
+const INDIAN_LANGS = new Set(["hi","bn","ta","te","mr","gu","pa","kn","ml","ur","or","as","ne","sa"]);
+
+export function ConversationPanel({
+  entries,
+  onOpenCBT,
+  languageCode,
+  whisperConfidence,
+}: ConversationPanelProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [entries]);
+
+  const langLabel = languageCode ? LANG_NAMES[languageCode] ?? languageCode.toUpperCase() : null;
+  const isIndian = languageCode ? INDIAN_LANGS.has(languageCode) : false;
 
   return (
     <article
@@ -35,19 +55,41 @@ export function ConversationPanel({ entries }: ConversationPanelProps) {
             Response timeline
           </h3>
         </div>
-        <div
-          className="shrink-0 rounded-full px-3 py-1.5 text-[11px] text-slate-500"
-          style={{
-            background: "rgba(255,255,255,0.04)",
-            border: "1px solid rgba(255,255,255,0.07)",
-          }}
-        >
-          {entries.length} messages
+        <div className="flex items-center gap-2">
+          {/* Language detection badge */}
+          {langLabel && (
+            <div
+              className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-medium"
+              style={{
+                background: "rgba(108,227,207,0.08)",
+                border: "1px solid rgba(108,227,207,0.18)",
+                color: "#6ce3cf",
+              }}
+            >
+              <span>{isIndian ? "\u{1F1EE}\u{1F1F3}" : "\u{1F1EC}\u{1F1E7}"}</span>
+              {langLabel}
+              {whisperConfidence !== undefined && (
+                <span style={{ color: whisperConfidence >= 0.75 ? "#7be495" : "#ffc96b", marginLeft: 2 }}>
+                  {Math.round(whisperConfidence * 100)}%
+                </span>
+              )}
+            </div>
+          )}
+          <div
+            className="shrink-0 rounded-full px-3 py-1.5 text-[11px] text-slate-500"
+            style={{
+              background: "rgba(255,255,255,0.04)",
+              border: "1px solid rgba(255,255,255,0.07)",
+            }}
+          >
+            {entries.length} messages
+          </div>
         </div>
       </div>
 
       {/* Messages */}
-      <div className="mt-4 flex-1 overflow-y-auto space-y-3 pr-1"
+      <div
+        className="mt-4 flex-1 overflow-y-auto space-y-3 pr-1"
         style={{ maxHeight: "400px", scrollbarWidth: "thin", scrollbarColor: "rgba(255,255,255,0.06) transparent" }}
       >
         {entries.length === 0 ? (
@@ -77,7 +119,13 @@ export function ConversationPanel({ entries }: ConversationPanelProps) {
           </div>
         ) : (
           entries.map((entry) => (
-            <MessageBubble key={entry.id} entry={entry} />
+            <div key={entry.id}>
+              <MessageBubble entry={entry} />
+              {/* CBT suggestion card below assistant message */}
+              {entry.role === "assistant" && entry.cbtTechniqueSuggested && onOpenCBT && (
+                <CBTCard technique={entry.cbtTechniqueSuggested} onOpen={onOpenCBT} />
+              )}
+            </div>
           ))
         )}
         <div ref={bottomRef} />
@@ -89,8 +137,13 @@ export function ConversationPanel({ entries }: ConversationPanelProps) {
 function MessageBubble({ entry }: { entry: ConversationEntry }) {
   const isAssistant = entry.role === "assistant";
 
+  const mhiColor =
+    (entry.mhi ?? 100) >= 75 ? "#7be495"
+    : (entry.mhi ?? 100) >= 55 ? "#ffc96b"
+    : "#ff7b70";
+
   return (
-    <div className={clsx("flex", isAssistant ? "justify-start" : "justify-end")}>
+    <div className={clsx("flex flex-col", isAssistant ? "items-start" : "items-end")}>
       <div
         className={clsx(
           "max-w-[85%] rounded-[16px] px-4 py-3",
@@ -98,17 +151,11 @@ function MessageBubble({ entry }: { entry: ConversationEntry }) {
         )}
         style={
           isAssistant
-            ? {
-                background: "rgba(108,227,207,0.07)",
-                border: "1px solid rgba(108,227,207,0.14)",
-              }
-            : {
-                background: "rgba(255,255,255,0.06)",
-                border: "1px solid rgba(255,255,255,0.09)",
-              }
+            ? { background: "rgba(108,227,207,0.07)", border: "1px solid rgba(108,227,207,0.14)" }
+            : { background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.09)" }
         }
       >
-        {/* Role label */}
+        {/* Role label + timestamp */}
         <div className="flex items-center justify-between gap-4 mb-2">
           <span
             className="text-[10px] font-semibold uppercase tracking-[0.18em]"
@@ -123,6 +170,26 @@ function MessageBubble({ entry }: { entry: ConversationEntry }) {
         <p className="text-[13px] leading-relaxed text-slate-200 whitespace-pre-line">
           {entry.content}
         </p>
+
+        {/* MHI + category metadata for assistant messages */}
+        {isAssistant && entry.mhi !== undefined && (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            <span
+              className="rounded-full px-2 py-0.5 text-[10px] font-semibold"
+              style={{ background: `${mhiColor}15`, color: mhiColor, border: `1px solid ${mhiColor}30` }}
+            >
+              MHI {entry.mhi}
+            </span>
+            {entry.category && (
+              <span
+                className="rounded-full px-2 py-0.5 text-[10px]"
+                style={{ background: "rgba(255,255,255,0.04)", color: "#64748b", border: "1px solid rgba(255,255,255,0.07)" }}
+              >
+                {entry.category}
+              </span>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

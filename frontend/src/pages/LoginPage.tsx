@@ -1,11 +1,21 @@
+import { useState } from "react";
 import { GoogleLogin } from "@react-oauth/google";
-import { Activity, LockKeyhole, ShieldCheck, HeartPulse, Sparkles } from "lucide-react";
+import { Activity, LockKeyhole, ShieldCheck, HeartPulse, Sparkles, Globe } from "lucide-react";
 import { useAuth } from "../lib/auth";
+import { SUPPORTED_LANGUAGES } from "../types";
 
 export function LoginPage() {
   const { loginWithGoogleCredential, error, isLoading, clearError } = useAuth();
   const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
   const hasGoogleClientId = Boolean(googleClientId && googleClientId.trim());
+  const [preferredLang, setPreferredLang] = useState("en");
+
+  async function handleGoogleSuccess(credential: string) {
+    clearError();
+    // Store preferred language in localStorage so auth flow can pick it up
+    window.localStorage.setItem("preferred_language_pending", preferredLang);
+    await loginWithGoogleCredential(credential);
+  }
 
   return (
     <div
@@ -36,7 +46,7 @@ export function LoginPage() {
 
       <div className="relative mx-auto flex min-h-screen max-w-[1300px] items-stretch gap-4 p-4 lg:gap-5 lg:p-5">
 
-        {/* ── LEFT PANEL ─────────────────────────────── */}
+        {/* LEFT PANEL */}
         <div
           className="hidden flex-1 flex-col justify-between overflow-hidden rounded-[28px] p-10 lg:flex lg:p-14"
           style={{
@@ -44,7 +54,6 @@ export function LoginPage() {
             border: "1px solid rgba(255,255,255,0.07)",
           }}
         >
-          {/* Top content */}
           <div>
             {/* Brand pill */}
             <div className="inline-flex items-center gap-2.5 rounded-full px-4 py-2"
@@ -116,7 +125,7 @@ export function LoginPage() {
           </div>
         </div>
 
-        {/* ── RIGHT PANEL ─────────────────────────────── */}
+        {/* RIGHT PANEL */}
         <div
           className="flex w-full flex-col justify-center rounded-[28px] p-6 sm:p-8 lg:w-[460px] lg:shrink-0"
           style={{
@@ -126,7 +135,7 @@ export function LoginPage() {
         >
           <div className="mx-auto w-full max-w-[360px]">
 
-            {/* Mobile brand (hidden on desktop) */}
+            {/* Mobile brand */}
             <div className="mb-8 flex items-center gap-2.5 lg:hidden">
               <div
                 className="flex h-9 w-9 items-center justify-center rounded-xl"
@@ -137,12 +146,10 @@ export function LoginPage() {
               <span className="text-sm font-semibold text-[#6ce3cf]">Well-Being AI</span>
             </div>
 
-            {/* Sign in label */}
             <p className="text-[11px] font-semibold uppercase tracking-[0.25em] text-slate-500">
               Sign In
             </p>
 
-            {/* Heading */}
             <h2
               className="mt-3 text-[2rem] font-bold leading-[1.1] tracking-[-0.025em] text-white"
               style={{ fontFamily: "'Space Grotesk', sans-serif" }}
@@ -155,9 +162,42 @@ export function LoginPage() {
               No passwords, no friction.
             </p>
 
+            {/* ── Language selector ────────────────────────────── */}
+            <div className="mt-5">
+              <div className="flex items-center gap-2 mb-2">
+                <Globe className="h-3.5 w-3.5 text-[#6ce3cf]/70" />
+                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+                  Preferred language
+                </p>
+              </div>
+              <div
+                className="rounded-[14px] p-0.5"
+                style={{
+                  background: "rgba(255,255,255,0.03)",
+                  border: "1px solid rgba(255,255,255,0.07)",
+                }}
+              >
+                <select
+                  value={preferredLang}
+                  onChange={(e) => setPreferredLang(e.target.value)}
+                  className="w-full rounded-[12px] px-4 py-3 text-[13px] text-white bg-transparent outline-none cursor-pointer"
+                  style={{ background: "rgba(9,17,31,0.6)" }}
+                >
+                  {SUPPORTED_LANGUAGES.map((lang) => (
+                    <option key={lang.code} value={lang.code} style={{ background: "#09111f" }}>
+                      {lang.flag} {lang.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <p className="mt-1.5 text-[11px] text-slate-600">
+                The assistant will greet you and respond in this language by default.
+              </p>
+            </div>
+
             {/* Main auth card */}
             <div
-              className="mt-7 rounded-[22px] p-1.5"
+              className="mt-5 rounded-[22px] p-1.5"
               style={{
                 background: "linear-gradient(145deg, rgba(108,227,207,0.12) 0%, rgba(255,255,255,0.04) 100%)",
                 border: "1px solid rgba(108,227,207,0.15)",
@@ -166,7 +206,6 @@ export function LoginPage() {
               <div className="rounded-[18px] p-4" style={{ background: "rgba(9,17,31,0.6)" }}>
                 {hasGoogleClientId ? (
                   <div className="space-y-3">
-                    {/* Google button */}
                     <div
                       className="overflow-hidden rounded-[14px]"
                       style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.08)" }}
@@ -181,16 +220,14 @@ export function LoginPage() {
                           text="continue_with"
                           width="300"
                           onSuccess={(credentialResponse) => {
-                            clearError();
                             if (!credentialResponse.credential) return;
-                            void loginWithGoogleCredential(credentialResponse.credential);
+                            void handleGoogleSuccess(credentialResponse.credential);
                           }}
                           onError={() => { clearError(); }}
                         />
                       </div>
                     </div>
 
-                    {/* Status */}
                     {!isLoading && !error && (
                       <div
                         className="flex items-center gap-2.5 rounded-[12px] px-4 py-3"
@@ -224,7 +261,6 @@ export function LoginPage() {
                   </div>
                 )}
 
-                {/* Loading */}
                 {isLoading && (
                   <div
                     className="mt-3 flex items-center gap-3 rounded-[12px] px-4 py-3"
@@ -237,7 +273,6 @@ export function LoginPage() {
                   </div>
                 )}
 
-                {/* Error */}
                 {error && (
                   <div
                     className="mt-3 rounded-[12px] p-4"
@@ -274,7 +309,6 @@ export function LoginPage() {
               </div>
             </div>
 
-            {/* Fine print */}
             <p className="mt-6 text-center text-[11px] leading-relaxed text-slate-600">
               By signing in you agree to keep this workspace personal.
               <br />

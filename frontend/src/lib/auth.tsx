@@ -7,7 +7,7 @@ import {
   type PropsWithChildren,
 } from "react";
 
-import { getCurrentUser, loginWithGoogle } from "./api";
+import { getCurrentUser, loginWithGoogle, updateUserProfile } from "./api";
 import type { AuthUser } from "../types";
 
 type AuthContextType = {
@@ -67,6 +67,14 @@ export function AuthProvider({ children }: PropsWithChildren) {
           const auth = await loginWithGoogle(credential);
           window.localStorage.setItem(STORAGE_KEY, auth.access_token);
           setToken(auth.access_token);
+          // Apply pending preferred_language selected on login screen
+          const pendingLang = window.localStorage.getItem("preferred_language_pending");
+          if (pendingLang) {
+            try {
+              await updateUserProfile(auth.access_token, { preferred_language: pendingLang });
+            } catch { /* non-fatal */ }
+            window.localStorage.removeItem("preferred_language_pending");
+          }
           await refreshUserFromToken(auth.access_token);
         } catch (err) {
           setError(err instanceof Error ? err.message : "Google sign-in failed");

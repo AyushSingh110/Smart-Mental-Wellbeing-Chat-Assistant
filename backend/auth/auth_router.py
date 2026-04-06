@@ -121,6 +121,8 @@ async def google_login(payload: GoogleTokenRequest):
                 "phq2_total": 0,
                 "gad2_total": 0,
                 "latest_mhi": 75,
+                "avatar_id": "therapist",
+                "preferred_language": "en",
                 "created_at": now,
                 "last_login": now,
             }
@@ -150,4 +152,6 @@ async def me(user_id: ObjectId = Depends(get_current_user)):
         phq2_total=int(user.get("phq2_total", 0)),
         gad2_total=int(user.get("gad2_total", 0)),
         latest_mhi=int(user.get("latest_mhi", user.get("baseline_mhi", 75))),
+        avatar_id=user.get("avatar_id", "therapist"),
+        preferred_language=user.get("preferred_language", "en"),
     )

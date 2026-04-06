@@ -29,7 +29,21 @@ export default {
       backgroundImage: {
         "hero-grid":
           "radial-gradient(circle at top, rgba(69, 213, 207, 0.14), transparent 34%), linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0))"
-      }
+      },
+      keyframes: {
+        fadeIn: {
+          "0%":   { opacity: "0", transform: "translateY(6px)" },
+          "100%": { opacity: "1", transform: "translateY(0)" },
+        },
+        riseIn: {
+          "0%":   { opacity: "0", transform: "translateY(16px)" },
+          "100%": { opacity: "1", transform: "translateY(0)" },
+        },
+      },
+      animation: {
+        fadeIn:   "fadeIn 0.25s ease forwards",
+        "rise-in": "riseIn 0.35s ease forwards",
+      },
     }
   },
   plugins: []

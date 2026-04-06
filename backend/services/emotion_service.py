@@ -3,6 +3,9 @@ from __future__ import annotations
 import os
 import re
 import logging
+import statistics
+from dataclasses import dataclass, field
+from typing import Optional
 
 import torch
 from transformers import DistilBertTokenizerFast, DistilBertForSequenceClassification
@@ -16,7 +19,7 @@ _LOCAL_PATH = settings.EMOTION_MODEL_PATH
 # ── Canonical labels used everywhere in the pipeline
 CANONICAL_LABELS = ["stress", "anxiety", "sadness", "anger", "fear", "neutral"]
 
-# Any label the fine-tuned model might output  = canonical label 
+# Any label the fine-tuned model might output  = canonical label
 _LABEL_MAP: dict[str, str] = {
     "stress":     "stress",
     "anxiety":    "anxiety",  "anxious":   "anxiety",
@@ -50,6 +53,46 @@ _NEGATIONS = re.compile(r"\b(not|never|hardly|barely|don't|cant|can't|isn't|wasn
 _QUESTION_RE = re.compile(r"\?$")
 _HOPELESS_EMOTION = re.compile(r"\b(disappear|gone|dead|empty|numb|hopeless|pointless)\b", re.I)
 
+# ── Hedging patterns: "I think I'm fine", "maybe it's nothing", "probably okay"
+_HEDGING_RE = re.compile(
+    r"\b("
+    r"i\s+(think|guess|suppose|believe)\s+(i'?m\s+)?(fine|okay|ok|alright|good|not\s+that\s+bad)|"
+    r"(maybe|perhaps|probably|might\s+be)\s+(it'?s?\s+)?(nothing|fine|okay|ok|just\s+stress)|"
+    r"(not\s+sure\s+if|don'?t\s+know\s+if)\s+it'?s?\s+that\s+(bad|serious|big)|"
+    r"(just|only)\s+(a\s+bit|a\s+little|slightly)\s+(sad|anxious|stressed|worried)|"
+    r"(shouldn'?t\s+complain|others\s+have\s+it\s+worse|i'?ll\s+be\s+fine|i\s+can\s+handle\s+it)|"
+    r"(no\s+biggie|nothing\s+major|don'?t\s+mind\s+me)|"
+    r"(i\s+don'?t\s+want\s+to\s+(bother|burden|worry)\s+(you|anyone))"
+    r")\b",
+    re.I,
+)
+
+# ── Masking/suppression patterns: forced positivity over distress
+_MASKING_RE = re.compile(
+    r"\b("
+    r"(pretend(ing)?|act(ing)?\s+like)\s+(everything('?s)?\s+(fine|okay|normal)|i'?m\s+(fine|okay|happy))|"
+    r"(wear(ing)?\s+a\s+(smile|mask)|put\s+on\s+a\s+(brave\s+face|front))|"
+    r"(smile\s+(through|despite)|laugh\s+(it\s+off|through\s+the\s+pain))|"
+    r"(nobody\s+knows|hide\s+it|keep\s+it\s+(inside|to\s+myself|hidden))|"
+    r"(on\s+the\s+outside\s+i'?m?\s+(fine|okay|happy)|inside\s+i'?m?\s+(not|hurting|broken|empty))|"
+    r"(fake\s+(smile|laugh|it)|force\s+(a\s+)?(smile|laugh))|"
+    r"(told\s+everyone\s+(i'?m\s+)?(fine|okay)|acting\s+normal\s+but)"
+    r")\b",
+    re.I,
+)
+
+
+@dataclass
+class EmotionFullResult:
+    """Rich emotion analysis result returned by predict_full()."""
+    scores: dict[str, float]                    # canonical emotion scores, sum ≈ 1.0
+    top_label: str                               # highest-confidence canonical label
+    top_score: float                             # confidence of top label
+    top_3: list[tuple[str, float]]              # top-3 (label, score) sorted descending
+    emotion_complexity: float                   # std-dev of top-3 scores (0=pure, 1=mixed)
+    suppression_flagged: bool                   # masking pattern detected
+    hedging_detected: bool                      # hedging/minimisation pattern detected
+
 
 class EmotionService:
 
@@ -59,7 +102,7 @@ class EmotionService:
         self._loaded   = False
         self._load()
 
-    # Loading
+    # ── Loading
     def _load(self) -> None:
         path = os.getenv("EMOTION_MODEL_PATH", "").strip() or _LOCAL_PATH
         try:
@@ -78,10 +121,11 @@ class EmotionService:
             )
             self._loaded = False
 
-    # Public API
+    # ── Public API
 
     def predict(self, text: str) -> dict[str, float]:
         """
+        Backward-compatible API.
         Returns canonical emotion score dict.
         All 6 labels always present, values sum to 1.0.
         """
@@ -93,7 +137,65 @@ class EmotionService:
                 logger.error("EmotionService.predict runtime error: %s", exc)
         return keyword_scores
 
-    #  Internals
+    def predict_full(self, text: str) -> EmotionFullResult:
+        """
+        Extended analysis returning:
+        - Full score dict
+        - Top-3 (label, score) tuples
+        - emotion_complexity (std-dev of top-3 scores)
+        - suppression_flagged (masking/suppression patterns)
+        - hedging_detected (minimisation language)
+        """
+        scores = self.predict(text)
+
+        sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        top_3 = sorted_scores[:3]
+        top_label, top_score = sorted_scores[0]
+
+        # emotion_complexity: std-dev of top-3 confidence values
+        # Low value = one dominant emotion (pure); high = mixed/ambiguous
+        top_3_values = [s for _, s in top_3]
+        try:
+            emotion_complexity = round(statistics.stdev(top_3_values), 4) if len(top_3_values) >= 2 else 0.0
+        except statistics.StatisticsError:
+            emotion_complexity = 0.0
+
+        # Detect suppression/masking
+        suppression_flagged = bool(_MASKING_RE.search(text))
+
+        # Detect hedging/minimisation
+        hedging_detected = bool(_HEDGING_RE.search(text))
+
+        # If hedging detected with a non-neutral top emotion, slightly reduce top confidence
+        # (signal that the user is downplaying their state)
+        if hedging_detected and top_label != "neutral" and top_score > 0.40:
+            adjusted_scores = dict(scores)
+            shift = min(0.12, top_score * 0.18)
+            adjusted_scores[top_label] = round(max(0.0, top_score - shift), 4)
+            adjusted_scores["neutral"] = round(adjusted_scores.get("neutral", 0.0) + shift * 0.5, 4)
+            total = sum(adjusted_scores.values()) or 1.0
+            adjusted_scores = {k: round(v / total, 4) for k, v in adjusted_scores.items()}
+            sorted_scores = sorted(adjusted_scores.items(), key=lambda x: x[1], reverse=True)
+            top_3 = sorted_scores[:3]
+            top_label, top_score = sorted_scores[0]
+            scores = adjusted_scores
+
+        logger.debug(
+            "EmotionFull | top=%s(%.2f) complexity=%.3f suppress=%s hedge=%s",
+            top_label, top_score, emotion_complexity, suppression_flagged, hedging_detected,
+        )
+
+        return EmotionFullResult(
+            scores=scores,
+            top_label=top_label,
+            top_score=top_score,
+            top_3=top_3,
+            emotion_complexity=emotion_complexity,
+            suppression_flagged=suppression_flagged,
+            hedging_detected=hedging_detected,
+        )
+
+    # ── Internals
     def _model_predict(self, text: str) -> dict[str, float]:
         inputs = self.tokenizer(
             text,

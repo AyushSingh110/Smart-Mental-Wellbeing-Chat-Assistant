@@ -1,105 +1,254 @@
+/**
+ * VoiceOrb — records microphone audio via MediaRecorder,
+ * sends the blob to backend /voice/transcribe (Whisper),
+ * and returns transcript + detected language code + confidence.
+ *
+ * This replaces browser SpeechRecognition which only works in English.
+ * Whisper auto-detects Hindi, Bengali, Tamil, Telugu, etc. perfectly.
+ */
 import { useEffect, useRef, useState } from "react";
-import { Mic, MicOff, AudioLines, ShieldCheck } from "lucide-react";
+import { Mic, AudioLines, ShieldCheck, Square } from "lucide-react";
+import { API_BASE_URL } from "../../lib/api";
 
 type VoiceOrbProps = {
-  onTranscript: (text: string) => void;
+  token: string | null;
+  onTranscript: (text: string, confidence?: number, languageCode?: string, languageName?: string) => void;
   disabled?: boolean;
+  preferredLanguage?: string;
 };
 
 type RecordingState = "idle" | "listening" | "processing" | "error";
 
-export function VoiceOrb({ onTranscript, disabled = false }: VoiceOrbProps) {
-  const [state, setState]           = useState<RecordingState>("idle");
-  const [transcript, setTranscript] = useState("");
-  const [errorMsg, setErrorMsg]     = useState("");
-  const recognitionRef              = useRef<SpeechRecognition | null>(null);
-
-  // Check browser support
-  const SpeechRecognitionAPI =
-    typeof window !== "undefined"
-      ? window.SpeechRecognition ?? (window as any).webkitSpeechRecognition
-      : null;
-  const isSupported = Boolean(SpeechRecognitionAPI);
+// ── Web Audio API waveform from microphone stream (20 frequency bars)
+function useMicWaveform(stream: MediaStream | null) {
+  const [bars, setBars] = useState<number[]>(Array(20).fill(0));
+  const ctxRef      = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const rafRef      = useRef<number | null>(null);
 
   useEffect(() => {
-    return () => {
-      recognitionRef.current?.abort();
-    };
-  }, []);
-
-  function startListening() {
-    if (!isSupported || disabled) return;
-
-    setErrorMsg("");
-    setTranscript("");
-
-    const recognition = new SpeechRecognitionAPI!();
-    recognitionRef.current = recognition;
-
-    recognition.continuous      = true;
-    recognition.interimResults  = true;
-    recognition.lang            = "";      // auto-detect language
-    recognition.maxAlternatives = 1;
-
-    recognition.onstart = () => setState("listening");
-
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
-      let interim = "";
-      let final   = "";
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const t = event.results[i][0].transcript;
-        if (event.results[i].isFinal) final += t;
-        else interim += t;
-      }
-      setTranscript(final || interim);
-      if (final) {
-        onTranscript(final.trim());
-      }
-    };
-
-    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-      const friendly: Record<string, string> = {
-        "not-allowed":      "Microphone access was denied. Please allow it in browser settings.",
-        "no-speech":        "No speech detected. Try speaking again.",
-        "network":          "Network issue. Check your connection.",
-        "audio-capture":    "Could not capture audio. Check your microphone.",
-        "aborted":          "",
-      };
-      const msg = friendly[event.error] ?? `Error: ${event.error}`;
-      if (msg) setErrorMsg(msg);
-      setState("error");
-    };
-
-    recognition.onend = () => {
-      setState((s) => (s === "listening" ? "idle" : s));
-    };
+    if (!stream) {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      setBars(Array(20).fill(0));
+      ctxRef.current?.close().catch(() => {});
+      ctxRef.current    = null;
+      analyserRef.current = null;
+      return;
+    }
 
     try {
-      recognition.start();
+      const ctx      = new AudioContext();
+      ctxRef.current = ctx;
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 64;
+      analyser.smoothingTimeConstant = 0.6;
+      analyserRef.current = analyser;
+      ctx.createMediaStreamSource(stream).connect(analyser);
+
+      const data = new Uint8Array(analyser.frequencyBinCount);
+      const tick = () => {
+        analyser.getByteFrequencyData(data);
+        const step = Math.floor(data.length / 20);
+        setBars(Array.from({ length: 20 }, (_, i) =>
+          Math.round((data[i * step] / 255) * 100),
+        ));
+        rafRef.current = requestAnimationFrame(tick);
+      };
+      rafRef.current = requestAnimationFrame(tick);
     } catch {
-      setErrorMsg("Could not start voice recognition.");
+      // Web Audio unavailable — bars stay silent
+    }
+
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      ctxRef.current?.close().catch(() => {});
+      ctxRef.current    = null;
+      analyserRef.current = null;
+    };
+  }, [stream]);
+
+  return bars;
+}
+
+// Best MIME type the browser supports for recording
+function getSupportedMimeType(): string {
+  const types = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/ogg;codecs=opus",
+    "audio/ogg",
+    "audio/mp4",
+  ];
+  for (const t of types) {
+    if (MediaRecorder.isTypeSupported(t)) return t;
+  }
+  return "";
+}
+
+export function VoiceOrb({
+  token,
+  onTranscript,
+  disabled = false,
+  preferredLanguage = "en",
+}: VoiceOrbProps) {
+  const [state, setState]           = useState<RecordingState>("idle");
+  const [transcript, setTranscript] = useState("");
+  const [detectedLang, setDetectedLang] = useState<string>("");
+  const [errorMsg, setErrorMsg]     = useState("");
+  const [stream, setStream]         = useState<MediaStream | null>(null);
+
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef   = useRef<Blob[]>([]);
+
+  const isListening  = state === "listening";
+  const isProcessing = state === "processing";
+  const waveformBars = useMicWaveform(stream);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      recorderRef.current?.stop();
+      stream?.getTracks().forEach((t) => t.stop());
+    };
+  }, [stream]);
+
+  async function startRecording() {
+    if (disabled || !token) return;
+    setErrorMsg("");
+    setTranscript("");
+    setDetectedLang("");
+
+    let micStream: MediaStream;
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      setErrorMsg("Microphone access denied. Please allow it in browser settings.");
+      setState("error");
+      return;
+    }
+
+    const mimeType = getSupportedMimeType();
+    let recorder: MediaRecorder;
+    try {
+      recorder = new MediaRecorder(micStream, mimeType ? { mimeType } : undefined);
+    } catch {
+      setErrorMsg("MediaRecorder not supported in this browser.");
+      setState("error");
+      micStream.getTracks().forEach((t) => t.stop());
+      return;
+    }
+
+    chunksRef.current = [];
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) chunksRef.current.push(e.data);
+    };
+
+    recorder.onstop = async () => {
+      const blob = new Blob(chunksRef.current, { type: mimeType || "audio/webm" });
+      micStream.getTracks().forEach((t) => t.stop());
+      setStream(null);
+
+      // Only block truly empty blobs (browser produced 0 audio bytes at all)
+      if (blob.size === 0) {
+        setErrorMsg("No audio captured. Please check your microphone.");
+        setState("error");
+        return;
+      }
+
+      setState("processing");
+      await sendToWhisper(blob, mimeType);
+    };
+
+    recorder.onerror = () => {
+      setErrorMsg("Recording failed.");
+      setState("error");
+      micStream.getTracks().forEach((t) => t.stop());
+      setStream(null);
+    };
+
+    recorderRef.current = recorder;
+    setStream(micStream);
+    // No timeslice: browser buffers all audio and fires one ondataavailable on stop.
+    // This is the most reliable approach on Windows Chrome/Edge — avoids 0-byte blobs
+    // that happen when requestData() or short timeslices race with the stop event.
+    recorder.start();
+    setState("listening");
+  }
+
+  async function sendToWhisper(blob: Blob, mimeType: string) {
+    if (!token) return;
+    try {
+      const formData = new FormData();
+      // Determine file extension from MIME type
+      const ext = mimeType.includes("ogg") ? "ogg"
+                : mimeType.includes("mp4") ? "mp4"
+                : mimeType.includes("wav") ? "wav"
+                : "webm";
+      formData.append("audio", blob, `recording.${ext}`);
+      // Pass preferred language as a hint (Whisper will still auto-detect,
+      // but uses this as a fallback when confidence < 75%)
+      formData.append("language", preferredLanguage);
+
+      const response = await fetch(`${API_BASE_URL}/voice/transcribe`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail ?? `HTTP ${response.status}`);
+      }
+
+      const data = await response.json() as {
+        transcript:    string;
+        language_code: string;
+        language_name: string;
+        confidence:    number;
+        detected_lang: string;
+      };
+
+      const text = data.transcript?.trim() ?? "";
+      if (!text) {
+        setErrorMsg("No speech detected. Try speaking more clearly.");
+        setState("error");
+        return;
+      }
+
+      setTranscript(text);
+      setDetectedLang(data.language_name);
+      setState("idle");
+      onTranscript(text, data.confidence, data.language_code, data.language_name);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Transcription failed.";
+      setErrorMsg(msg);
       setState("error");
     }
   }
 
-  function stopListening() {
-    recognitionRef.current?.stop();
-    setState("idle");
+  function stopRecording() {
+    if (recorderRef.current && recorderRef.current.state !== "inactive") {
+      recorderRef.current.stop(); // fires ondataavailable with all buffered audio, then onstop
+    }
   }
 
   function toggleListening() {
-    if (state === "listening") stopListening();
-    else startListening();
+    if (isListening) stopRecording();
+    else if (state === "idle" || state === "error") void startRecording();
   }
 
-  const isActive = state === "listening";
+  const isMediaRecorderSupported = typeof MediaRecorder !== "undefined";
 
   const STATUS_TEXT: Record<RecordingState, string> = {
-    idle:       isSupported ? "Tap to start speaking" : "Voice not supported in this browser",
-    listening:  "Listening… speak now",
-    processing: "Processing…",
-    error:      errorMsg || "Something went wrong",
+    idle:       isMediaRecorderSupported
+                  ? (token ? "Tap to start — speak in any language" : "Sign in to use voice")
+                  : "Voice not supported in this browser",
+    listening:  "Recording… tap again to stop",
+    processing: "Transcribing with Whisper…",
+    error:      errorMsg || "Something went wrong. Try again.",
   };
+
+  const orbDisabled = !isMediaRecorderSupported || disabled || !token || isProcessing;
 
   return (
     <article
@@ -120,6 +269,9 @@ export function VoiceOrb({ onTranscript, disabled = false }: VoiceOrbProps) {
         >
           Speak in any language
         </h3>
+        <p className="mt-0.5 text-[11px] text-slate-600">
+          Hindi, Tamil, Telugu, Bengali &amp; 10 more — auto-detected
+        </p>
       </div>
 
       {/* Orb */}
@@ -127,63 +279,88 @@ export function VoiceOrb({ onTranscript, disabled = false }: VoiceOrbProps) {
         <button
           type="button"
           onClick={toggleListening}
-          disabled={!isSupported || disabled}
-          aria-label={isActive ? "Stop recording" : "Start recording"}
+          disabled={orbDisabled}
+          aria-label={isListening ? "Stop recording" : "Start recording"}
           className="group relative flex h-[120px] w-[120px] items-center justify-center rounded-full transition-transform duration-200 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
           style={{ outline: "none" }}
         >
-          {/* Animated rings when active */}
-          {isActive && (
+          {/* Pulse rings while recording */}
+          {isListening && (
             <>
-              <span
-                className="absolute inset-0 rounded-full animate-ping opacity-20"
-                style={{ background: "rgba(108,227,207,0.4)" }}
-              />
-              <span
-                className="absolute -inset-3 rounded-full border border-[#6ce3cf]/20 animate-pulse"
-              />
-              <span
-                className="absolute -inset-6 rounded-full border border-[#6ce3cf]/10 animate-pulse"
-                style={{ animationDelay: "0.3s" }}
-              />
+              <span className="absolute inset-0 rounded-full animate-ping opacity-20"
+                style={{ background: "rgba(108,227,207,0.4)" }} />
+              <span className="absolute -inset-3 rounded-full border border-[#6ce3cf]/20 animate-pulse" />
+              <span className="absolute -inset-6 rounded-full border border-[#6ce3cf]/10 animate-pulse"
+                style={{ animationDelay: "0.3s" }} />
             </>
           )}
 
-          {/* Core button */}
+          {/* Processing spinner rings */}
+          {isProcessing && (
+            <span className="absolute inset-0 rounded-full border-2 border-[#ffc96b]/30 border-t-[#ffc96b] animate-spin" />
+          )}
+
           <div
             className="relative flex h-[120px] w-[120px] items-center justify-center rounded-full transition-all duration-300"
             style={{
-              background: isActive
+              background: isListening
                 ? "linear-gradient(135deg, #6ce3cf 0%, #2cb8c7 100%)"
+                : isProcessing
+                ? "rgba(255,201,107,0.1)"
                 : "rgba(255,255,255,0.06)",
-              border: isActive
+              border: isListening
                 ? "2px solid rgba(108,227,207,0.5)"
+                : isProcessing
+                ? "2px solid rgba(255,201,107,0.3)"
                 : "2px solid rgba(255,255,255,0.1)",
-              boxShadow: isActive
+              boxShadow: isListening
                 ? "0 0 40px rgba(108,227,207,0.35), 0 0 80px rgba(108,227,207,0.1)"
                 : "none",
             }}
           >
-            {isActive ? (
-              <MicOff className="h-10 w-10 text-[#09111f]" strokeWidth={2} />
+            {isListening ? (
+              <Square className="h-8 w-8 text-[#09111f]" strokeWidth={2} fill="currentColor" />
+            ) : isProcessing ? (
+              <span className="text-[11px] font-semibold text-[#ffc96b]">AI</span>
             ) : (
-              <Mic
-                className="h-10 w-10 text-slate-300 transition-colors group-hover:text-white"
-                strokeWidth={1.5}
-              />
+              <Mic className="h-10 w-10 text-slate-300 transition-colors group-hover:text-white" strokeWidth={1.5} />
             )}
           </div>
         </button>
 
+        {/* Waveform visualizer — only while recording */}
+        {isListening && (
+          <div className="flex items-end gap-[2px]" style={{ height: 32, width: 120 }}>
+            {waveformBars.map((h, i) => (
+              <div
+                key={i}
+                className="rounded-full flex-1"
+                style={{
+                  height: `${Math.max(8, h)}%`,
+                  background: "linear-gradient(to top, #6ce3cf, #2cb8c7)",
+                  opacity: 0.5 + (h / 100) * 0.5,
+                  transition: "height 0.08s ease",
+                  minWidth: 3,
+                }}
+              />
+            ))}
+          </div>
+        )}
+
         {/* Status text */}
         <p
-          className="text-[13px] text-center"
-          style={{ color: state === "error" ? "#ff7b70" : state === "listening" ? "#6ce3cf" : "#64748b" }}
+          className="text-[13px] text-center leading-relaxed"
+          style={{
+            color: state === "error"      ? "#ff7b70"
+                 : isListening            ? "#6ce3cf"
+                 : isProcessing           ? "#ffc96b"
+                 : "#64748b",
+          }}
         >
           {STATUS_TEXT[state]}
         </p>
 
-        {/* Live transcript preview */}
+        {/* Transcript result with language badge */}
         {transcript && (
           <div
             className="w-full rounded-[14px] p-4"
@@ -192,9 +369,23 @@ export function VoiceOrb({ onTranscript, disabled = false }: VoiceOrbProps) {
               border: "1px solid rgba(108,227,207,0.14)",
             }}
           >
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6ce3cf]/60 mb-2">
-              Transcript
-            </p>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6ce3cf]/60">
+                Transcript
+              </p>
+              {detectedLang && (
+                <span
+                  className="rounded-full px-2 py-0.5 text-[10px] font-medium"
+                  style={{
+                    background: "rgba(108,227,207,0.12)",
+                    border: "1px solid rgba(108,227,207,0.2)",
+                    color: "#6ce3cf",
+                  }}
+                >
+                  {detectedLang}
+                </span>
+              )}
+            </div>
             <p className="text-[13px] leading-relaxed text-slate-300">{transcript}</p>
           </div>
         )}
@@ -203,9 +394,9 @@ export function VoiceOrb({ onTranscript, disabled = false }: VoiceOrbProps) {
       {/* Info tiles */}
       <div className="mt-auto grid grid-cols-3 gap-2">
         {[
-          { icon: <Mic className="h-3.5 w-3.5" />,          label: "Voice space",    value: "Auto language" },
-          { icon: <AudioLines className="h-3.5 w-3.5" />,   label: "Mode",           value: "Speech to text" },
-          { icon: <ShieldCheck className="h-3.5 w-3.5" />,  label: "Safety layer",   value: "Context-aware" },
+          { icon: <Mic className="h-3.5 w-3.5" />,         label: "Engine",       value: "OpenAI Whisper" },
+          { icon: <AudioLines className="h-3.5 w-3.5" />,  label: "Languages",    value: "14 Indian + EN" },
+          { icon: <ShieldCheck className="h-3.5 w-3.5" />, label: "Safety layer", value: "Context-aware" },
         ].map((item) => (
           <div
             key={item.label}

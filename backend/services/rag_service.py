@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 
 import numpy as np
@@ -50,9 +51,13 @@ SAFETY:
 
 LANGUAGE:
 - If a language instruction appears below, respond fully in that language.
+- If responding in Hindi, use the informal "tum" register rather than "aap" — it feels warmer and less clinical.
 """
 
 _LENGTH_INSTRUCTIONS: dict[str, str] = {
+    "Flourishing": (
+        "Write 2 to 3 warm, celebratory sentences. Acknowledge the positive state and invite further reflection."
+    ),
     "Stable": (
         "Write 3 to 4 short conversational sentences. Validate, respond naturally, and end with one light question."
     ),
@@ -60,10 +65,15 @@ _LENGTH_INSTRUCTIONS: dict[str, str] = {
         "Write 3 to 4 sentences. Reflect what the user said, add one supportive thought, and end with one open question."
     ),
     "Moderate Distress": (
-        "Write 2 to 3 sentences. Lead with emotional validation, keep advice minimal, and end with one gentle question."
+        "Write 2 to 3 sentences. Lead with emotional validation, keep advice minimal, and end with one gentle question. "
+        "If the session context includes a CBT technique hint, weave it in naturally as a suggestion — never as a directive."
     ),
     "High Risk": (
         "Write 1 to 2 very calm sentences. Be present, do not overload the user, and end with one grounding question."
+    ),
+    "Severe Risk": (
+        "Write 1 to 2 caring sentences. Acknowledge heaviness, gently mention that support is available, "
+        "and ask one simple check-in question."
     ),
     "Depression Risk": (
         "Write 1 to 2 caring sentences. Acknowledge heaviness and ask one simple check-in question."
@@ -71,6 +81,27 @@ _LENGTH_INSTRUCTIONS: dict[str, str] = {
 }
 
 _LENGTH_DEFAULT = "Write 2 to 3 warm conversational sentences and end with one open question."
+
+# ── Banned boilerplate phrases that the LLM tends to overuse
+_BANNED_PHRASES = re.compile(
+    r"(that\s+must\s+be\s+(so\s+)?hard|"
+    r"i\s+understand\s+exactly\s+how\s+you\s+feel|"
+    r"i'?m\s+so\s+sorry\s+to\s+hear\s+that|"
+    r"it'?s?\s+okay\s+to\s+not\s+be\s+okay|"
+    r"you'?re?\s+not\s+alone\s+in\s+this|"
+    r"remember\s+that\s+you\s+are\s+strong|"
+    r"things\s+will\s+get\s+better)",
+    re.IGNORECASE,
+)
+
+# ── CBT technique hints that can be woven naturally into Moderate Distress responses
+_CBT_NATURAL_HINTS: dict[str, str] = {
+    "breathing":        "gentle breathing techniques (like slowing the exhale) can help settle the body",
+    "grounding":        "grounding exercises — noticing what's around you right now — can help break the spiral",
+    "thought_record":   "writing down what's happening and how it's making you feel can sometimes create a little distance",
+    "cognitive_reframe":"trying to gently question whether that thought is 100% true can sometimes ease the pressure",
+    "body_scan":        "a quick body scan — just noticing where you're holding tension — can be surprisingly settling",
+}
 
 
 class RAGService:
@@ -127,6 +158,10 @@ class RAGService:
         language_code: str,
         chunks: list[dict],
         conversation_pairs: list[dict[str, str]] | None = None,
+        cbt_hint: str | None = None,
+        cross_session_ref: bool = False,
+        crisis_velocity: float = 0.0,
+        mhi_trajectory: str = "stable",
     ) -> str:
         context_text = "\n\n".join(
             f"Wellbeing technique {i + 1}:\n{chunk['text']}" for i, chunk in enumerate(chunks)
@@ -148,11 +183,41 @@ class RAGService:
         lang_instruction = ""
         try:
             from backend.services.multilingual_voice_service import build_language_instruction
-
             lang_instruction = build_language_instruction(language_code).strip()
         except ImportError:
             if language_code and language_code != "en":
                 lang_instruction = f"Respond entirely in {language_code}."
+
+        # Hindi tum register hint
+        if language_code in ("hi", "hi-IN"):
+            lang_instruction += " Use the informal 'tum' (तुम) form of address rather than 'aap' — it's warmer and more personal."
+
+        # CBT natural injection for Moderate Distress
+        cbt_section = ""
+        if category == "Moderate Distress" and cbt_hint:
+            hint_text = _CBT_NATURAL_HINTS.get(cbt_hint, "")
+            if hint_text:
+                cbt_section = f"Self-help suggestion to weave in naturally (do NOT name the technique explicitly): {hint_text}"
+
+        # Cross-session reference note
+        cross_ref_note = ""
+        if cross_session_ref:
+            cross_ref_note = "Note: The user appears to be referencing a previous session. Acknowledge continuity warmly."
+
+        # Velocity warning for fast escalation
+        velocity_note = ""
+        if crisis_velocity > 0.25:
+            velocity_note = (
+                f"Note: The user's distress level has been escalating across recent turns (velocity={crisis_velocity:.2f}). "
+                "Respond with extra steadiness and care."
+            )
+
+        # Trajectory note
+        trajectory_note = ""
+        if mhi_trajectory == "declining":
+            trajectory_note = "Note: User's wellbeing trend has been declining across sessions. Extra gentle tone is important."
+        elif mhi_trajectory == "volatile":
+            trajectory_note = "Note: User's wellbeing has been volatile. Prioritize stability and predictability in your response."
 
         sections = [
             _SYSTEM_PROMPT.strip(),
@@ -166,6 +231,10 @@ class RAGService:
             f"Crisis probability: {crisis_score:.2f}",
             f"Tier: {crisis_tier}",
             f"Category: {category}",
+            cbt_section,
+            cross_ref_note,
+            velocity_note,
+            trajectory_note,
             conversation_text,
             "Length instruction:",
             _LENGTH_INSTRUCTIONS.get(category, _LENGTH_DEFAULT),
@@ -174,6 +243,10 @@ class RAGService:
             "Respond now in natural prose only. End with exactly one question.",
         ]
         return "\n\n".join(section for section in sections if section)
+
+    def _contains_banned_phrases(self, text: str) -> bool:
+        """Check if the LLM response contains overused boilerplate phrases."""
+        return bool(_BANNED_PHRASES.search(text))
 
     def generate_response(
         self,
@@ -187,6 +260,10 @@ class RAGService:
         category: str = "Stable",
         language_code: str = "en",
         conversation_pairs: list[dict[str, str]] | None = None,
+        cbt_hint: str | None = None,
+        cross_session_ref: bool = False,
+        crisis_velocity: float = 0.0,
+        mhi_trajectory: str = "stable",
     ) -> tuple[str, bool]:
         if crisis_tier in ("active", "passive"):
             logger.warning(
@@ -209,12 +286,32 @@ class RAGService:
                 language_code=language_code,
                 chunks=chunks,
                 conversation_pairs=conversation_pairs,
+                cbt_hint=cbt_hint,
+                cross_session_ref=cross_session_ref,
+                crisis_velocity=crisis_velocity,
+                mhi_trajectory=mhi_trajectory,
             )
             result = generate_llm_response(prompt)
             if not result or not result.strip():
                 logger.warning("RAGService | LLM returned empty")
                 return "", True
-            return result.strip(), False
+
+            result = result.strip()
+
+            # If response contains banned boilerplate, regenerate once
+            if self._contains_banned_phrases(result):
+                logger.info("RAGService | banned phrase detected, regenerating")
+                anti_boilerplate = (
+                    "\n\nIMPORTANT: Your previous response contained overused phrases. "
+                    "Rewrite without any of: 'That must be hard', 'I understand exactly', "
+                    "'I'm so sorry to hear', 'it's okay to not be okay', 'you're not alone', "
+                    "'things will get better'. Be more specific and personal to the user's actual words."
+                )
+                result2 = generate_llm_response(prompt + anti_boilerplate)
+                if result2 and result2.strip():
+                    result = result2.strip()
+
+            return result, False
         except Exception as exc:
             logger.error("RAGService.generate_response error: %s", exc)
             return "", True

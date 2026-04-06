@@ -6,7 +6,7 @@ from backend.config import settings
 
 logger = logging.getLogger(__name__)
 
-#  Emotion risk multipliers 
+# ── Emotion risk multipliers
 _EMOTION_MUL: dict[str, float] = {
     "sadness": 1.35,
     "fear":    1.25,
@@ -16,7 +16,7 @@ _EMOTION_MUL: dict[str, float] = {
     "neutral": 0.40,
 }
 
-#  Hard MHI ceilings per crisis tier 
+# ── Hard MHI ceilings per crisis tier
 # Applied AFTER all computation. MHI cannot exceed these values.
 _CRISIS_CEIL: dict[str, float] = {
     "active":   18.0,   # always "Crisis Risk"
@@ -25,7 +25,18 @@ _CRISIS_CEIL: dict[str, float] = {
     "none":    100.0,
 }
 
-#  Hopeless / disappearance language patterns ─
+# ── 7-band MHI category thresholds (descending, first match wins)
+_MHI_BANDS: list[tuple[float, str]] = [
+    (88.0, "Flourishing"),
+    (75.0, "Stable"),
+    (62.0, "Mild Stress"),
+    (48.0, "Moderate Distress"),
+    (34.0, "High Risk"),
+    (18.0, "Severe Risk"),
+    (0.0,  "Crisis Risk"),
+]
+
+# ── Hopeless / disappearance language patterns
 # Each MATCH deducts 6 MHI points (max 4 matches = 24 pts)
 _HOPELESS = re.compile(
     r"\b("
@@ -52,7 +63,33 @@ _HOPELESS = re.compile(
 _HOPELESS_PTS_PER_MATCH = 6.0
 _HOPELESS_MAX_PEN       = 24.0   # cap at 4 matches
 
-# Emotions that trigger persistence penalty when sustained across turns
+# ── Positive indicator patterns (bonus MHI points)
+_POSITIVE_INDICATORS = re.compile(
+    r"\b("
+    r"(feeling|feel)\s+(better|good|great|grateful|hopeful|optimistic)|"
+    r"(had\s+a\s+good\s+day|nice\s+day|beautiful\s+day)|"
+    r"(grateful|thankful|blessed|appreciat(e|ed|ing))|"
+    r"(progressing|improving|getting\s+better|on\s+the\s+mend)|"
+    r"(meditation|meditated|mindfulness|breathing\s+exercise|went\s+for\s+a\s+(walk|run|jog))|"
+    r"(talked\s+to\s+(a\s+friend|my\s+family|someone)|connected\s+with)|"
+    r"(accomplished|achieved|proud\s+of|succeeded|made\s+progress)|"
+    r"(slept\s+well|good\s+sleep|rested\s+well|ate\s+(well|healthy))"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_POSITIVE_BASE_BONUS = 5.0   # base bonus for positive indicators
+_POSITIVE_MAX_BONUS  = 8.0   # cap
+
+# ── Linguistic complexity bonus (longer, structured thought = engagement)
+_MIN_WORDS_FOR_COMPLEXITY = 20
+_COMPLEXITY_BONUS = 3.0       # awarded when message is complex and coherent
+
+# ── Consistency bonus: awarded when message length >= 15 words and non-crisis
+_CONSISTENCY_THRESHOLD = 15
+_CONSISTENCY_BONUS = 3.0
+
+# ── Emotions that trigger persistence penalty when sustained across turns
 _HIGH_RISK_EMOTIONS     = {"sadness", "fear", "anxiety"}
 _PERSISTENCE_PEN        = 8.0    # pts deducted when last N turns all high-risk
 _PERSISTENCE_WINDOW     = 3      # look back this many turns
@@ -70,7 +107,7 @@ class MentalHealthMatrix:
         }
         logger.debug("MentalHealthMatrix | weights=%s", self.weights)
 
-    #  Public API ─
+    # ── Public API
 
     def compute(
         self,
@@ -84,14 +121,18 @@ class MentalHealthMatrix:
         raw_text:          str           = "",
         recent_emotions:   list[str] | None = None,   # last N emotion labels
         mhi_trend:         list[float] | None = None, # last N MHI scores oldest→newest
+        emotion_complexity: float        = 0.0,       # from EmotionFullResult
+        suppression_flagged: bool        = False,      # from EmotionFullResult
     ) -> float:
         """
         Returns MHI ∈ [0, 100].  Lower = more at risk.
 
         Parameters
-        ─
-        recent_emotions : emotion labels from the last few turns (for persistence penalty)
-        mhi_trend       : MHI scores from the last few turns (for trend amplification)
+        ──────────
+        recent_emotions    : emotion labels from the last few turns (for persistence penalty)
+        mhi_trend          : MHI scores from the last few turns (for trend amplification)
+        emotion_complexity : std-dev of top-3 emotion scores (0=pure, high=mixed/ambiguous)
+        suppression_flagged: masking/suppression detected by emotion service
         """
         # Step 1 — Emotion risk adjustment
         emotion_adj = min(emotion_score * _EMOTION_MUL.get(emotion_label, 1.0), 1.0)
@@ -118,11 +159,13 @@ class MentalHealthMatrix:
         normalized = total_risk / weight_sum
         raw_mhi    = max(0.0, min(100.0, 100.0 * (1.0 - normalized)))
 
-        # Step 6 — Quadratic direct penalty above 0.55 threshold
-        # Fixes the MHI=42 bug: mid-range crisis scores now produce big drops
+        # Step 6 — Quadratic direct penalty above 0.55 threshold (FIXED)
+        # Bug fix: for crisis_score > 0.60, ensure minimum penalty of 25 pts
         if crisis_score > 0.55:
             excess  = (crisis_score - 0.55) / 0.45      # 0→1 as score goes 0.55→1.0
             penalty = (excess ** 1.5) * 55.0             # quadratic, max ~55 pts
+            if crisis_score > 0.60:
+                penalty = max(penalty, 25.0)             # fix: min 25 pts for score > 0.60
             raw_mhi = max(0.0, raw_mhi - penalty)
             logger.debug("Crisis penalty: score=%.2f excess=%.2f pen=%.1f", crisis_score, excess, penalty)
 
@@ -142,7 +185,32 @@ class MentalHealthMatrix:
                 raw_mhi = max(0.0, raw_mhi - _PERSISTENCE_PEN)
                 logger.debug("Persistence penalty: %.0f pts (all %s)", _PERSISTENCE_PEN, last_n)
 
-        # Step 9 — Hard ceiling by crisis tier
+        # Step 9 — Suppression penalty: masked distress is still distress
+        if suppression_flagged and raw_mhi > 50.0:
+            raw_mhi = max(0.0, raw_mhi - 8.0)
+            logger.debug("Suppression penalty: -8 pts")
+
+        # Step 10 — Emotion complexity penalty: mixed emotions signal hidden distress
+        if emotion_complexity > 0.15 and emotion_label != "neutral":
+            complexity_pen = min(emotion_complexity * 12.0, 6.0)
+            raw_mhi = max(0.0, raw_mhi - complexity_pen)
+            logger.debug("Complexity penalty: %.1f pts (complexity=%.3f)", complexity_pen, emotion_complexity)
+
+        # Step 11 — Positive indicators bonus (only when not in crisis tier)
+        if crisis_tier == "none" and raw_text:
+            pos_matches = len(_POSITIVE_INDICATORS.findall(raw_text))
+            if pos_matches > 0:
+                bonus = min(_POSITIVE_BASE_BONUS + (pos_matches - 1) * 1.5, _POSITIVE_MAX_BONUS)
+                raw_mhi = min(100.0, raw_mhi + bonus)
+                logger.debug("Positive indicator bonus: +%.1f pts (%d matches)", bonus, pos_matches)
+
+        # Step 12 — Linguistic complexity / engagement bonus
+        if raw_text and crisis_tier == "none":
+            word_count = len(raw_text.split())
+            if word_count >= _MIN_WORDS_FOR_COMPLEXITY:
+                raw_mhi = min(100.0, raw_mhi + _COMPLEXITY_BONUS)
+
+        # Step 13 — Hard ceiling by crisis tier
         ceiling = _CRISIS_CEIL.get(crisis_tier, 100.0)
         final   = round(min(raw_mhi, ceiling), 2)
 
@@ -162,24 +230,23 @@ class MentalHealthMatrix:
         crisis_tier:  str = "none",
     ) -> str:
         """
-        Risk category from MHI + crisis signals.
+        7-band risk category from MHI + crisis signals.
         Hard overrides for active/passive crisis tiers take absolute priority.
         """
         # Hard overrides
         if crisis_tier == "active"  or crisis_score >= 0.85:
             return "Crisis Risk"
         if crisis_tier == "passive" or crisis_score >= settings.CRISIS_PROBABILITY_THRESHOLD:
-            return "High Risk"
+            return "Severe Risk"
 
-        # MHI bands (tightened — higher bar for Stable)
-        if mhi >= 82: return "Stable"
-        if mhi >= 66: return "Mild Stress"
-        if mhi >= 50: return "Moderate Distress"
-        if mhi >= 32: return "High Risk"
-        if mhi >= 16: return "Depression Risk"
+        # 7-band MHI categorization (descending threshold check)
+        for threshold, label in _MHI_BANDS:
+            if mhi >= threshold:
+                return label
+
         return "Crisis Risk"
 
-    #  Internal helpers 
+    # ── Internal helpers
 
     @staticmethod
     def _trend_history(

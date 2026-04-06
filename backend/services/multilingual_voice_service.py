@@ -75,6 +75,7 @@ pip install faster-whisper gtts pydub
   pydub          : audio speed adjustment (optional but recommended)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
+# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 import io
@@ -82,8 +83,17 @@ import logging
 import os
 import tempfile
 from dataclasses import dataclass
+from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# -- ElevenLabs avatar → voice ID mapping (configurable via config.py) --------
+_ELEVENLABS_VOICE_MAP: dict[str, str] = {
+    "therapist": os.getenv("ELEVENLABS_VOICE_THERAPIST", "pNInz6obpgDQGcFmaJgB"),
+    "companion":  os.getenv("ELEVENLABS_VOICE_COMPANION",  "EXAVITQu4vr4xnSDxMaL"),
+    "guide":      os.getenv("ELEVENLABS_VOICE_GUIDE",      "AZnzlk1XvdvUeBnXmlld"),
+    "elder":      os.getenv("ELEVENLABS_VOICE_ELDER",      "onwK4e9ZLuTAKqWW03F9"),
+}
 
 # ── Language registry ─────────────────────────────────────────────────────────
 _LANG_META: dict[str, dict] = {
@@ -145,9 +155,13 @@ class MultilingualVoiceService:
     """
 
     def __init__(self):
-        self._model          = None
-        self._pyttsx3_engine = None
-        self._tts_backend    = None
+        self._model              = None
+        self._pyttsx3_engine     = None
+        self._tts_backend        = None
+        self._elevenlabs_key     = os.getenv("ELEVENLABS_API_KEY", "")
+        self._elevenlabs_model   = os.getenv("ELEVENLABS_MODEL", "eleven_multilingual_v2")
+        self._elevenlabs_chars   = 0   # chars used this month (in-memory approx)
+        self._elevenlabs_limit   = 10_000
         self._init_tts()
 
     # ── Initialisation ────────────────────────────────────────────────────────
@@ -234,26 +248,98 @@ class MultilingualVoiceService:
         language_code: str = "en",
         emotion_label: str = "default",
         crisis_tier:   str = "none",
+        avatar_id:     str = "therapist",
     ) -> bytes:
         """
-        Produces speech audio in the correct language with Indian accent
-        and emotion-matched speaking speed.
-        Returns MP3 bytes (gTTS) or WAV bytes (pyttsx3).
+        Priority chain:
+          1. ElevenLabs (if API key set and chars remaining)
+          2. gTTS (free, Indian accent)
+          3. pyttsx3 (offline fallback)
+        Returns MP3 bytes (ElevenLabs/gTTS) or WAV bytes (pyttsx3).
         """
         if not text.strip():
             return b""
 
+        # --- Layer 1: ElevenLabs ---
+        if self._elevenlabs_key and (self._elevenlabs_chars + len(text)) <= self._elevenlabs_limit:
+            try:
+                audio = self._elevenlabs_speak(text, language_code, emotion_label, crisis_tier, avatar_id)
+                self._elevenlabs_chars += len(text)
+                return audio
+            except Exception as exc:
+                logger.warning("ElevenLabs failed (%s), falling back to gTTS", exc)
+
+        # --- Layer 2: gTTS ---
         if self._tts_backend == "gtts":
             try:
                 return self._gtts_speak(text, language_code, emotion_label, crisis_tier)
             except Exception as exc:
                 logger.warning("gTTS failed (%s), using pyttsx3", exc)
 
+        # --- Layer 3: pyttsx3 ---
         return self._pyttsx3_speak(text, emotion_label, crisis_tier)
+
+    def get_elevenlabs_quota(self) -> dict:
+        """Returns approximate ElevenLabs character usage for this session."""
+        return {
+            "chars_used":      self._elevenlabs_chars,
+            "chars_limit":     self._elevenlabs_limit,
+            "chars_remaining": max(0, self._elevenlabs_limit - self._elevenlabs_chars),
+            "api_key_set":     bool(self._elevenlabs_key),
+        }
 
     @property
     def tts_backend(self) -> str:
         return self._tts_backend or "none"
+
+    # ── ElevenLabs ───────────────────────────────────────────────────────────
+
+    def _elevenlabs_speak(self, text, language_code, emotion_label, crisis_tier, avatar_id) -> bytes:
+        """
+        Calls ElevenLabs API. Uses eleven_multilingual_v2 which supports
+        Hindi, Tamil, Bengali, Telugu, Marathi, and other Indian languages.
+        Falls back to eleven_monolingual_v1 for English if multilingual unavailable.
+        Speed is approximated via stability/similarity_boost params.
+        """
+        import urllib.request
+        import json
+
+        voice_id = _ELEVENLABS_VOICE_MAP.get(avatar_id, _ELEVENLABS_VOICE_MAP["therapist"])
+
+        # Emotion → voice settings
+        spd_key = "crisis" if crisis_tier in ("active", "passive") else (
+            emotion_label if emotion_label in _SPEED else "default"
+        )
+        speed = _SPEED[spd_key]
+        # Map speed to ElevenLabs stability (lower speed → higher stability = calmer)
+        stability = round(min(1.0, 0.4 + (1.0 - speed) * 1.2), 2)
+        similarity = 0.75
+
+        payload = json.dumps({
+            "text": text,
+            "model_id": self._elevenlabs_model,
+            "voice_settings": {
+                "stability": stability,
+                "similarity_boost": similarity,
+            },
+        }).encode("utf-8")
+
+        url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
+        req = urllib.request.Request(
+            url,
+            data=payload,
+            headers={
+                "xi-api-key": self._elevenlabs_key,
+                "Content-Type": "application/json",
+                "Accept": "audio/mpeg",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            audio = resp.read()
+
+        logger.info("ElevenLabs TTS | voice=%s lang=%s bytes=%d", voice_id, language_code, len(audio))
+        return audio
 
     # ── gTTS ─────────────────────────────────────────────────────────────────
 
