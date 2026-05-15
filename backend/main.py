@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+
+# Fix OpenMP conflict between PyTorch and ONNX Runtime on Windows
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 from contextlib import asynccontextmanager
 from datetime import datetime
 from functools import partial

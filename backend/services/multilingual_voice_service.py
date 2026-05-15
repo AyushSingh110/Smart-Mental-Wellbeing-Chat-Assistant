@@ -85,14 +85,16 @@ import tempfile
 from dataclasses import dataclass
 from typing import Optional
 
+from backend.config import settings
+
 logger = logging.getLogger(__name__)
 
-# -- ElevenLabs avatar → voice ID mapping (configurable via config.py) --------
+# -- ElevenLabs avatar → voice ID mapping (read from settings / .env) ---------
 _ELEVENLABS_VOICE_MAP: dict[str, str] = {
-    "therapist": os.getenv("ELEVENLABS_VOICE_THERAPIST", "pNInz6obpgDQGcFmaJgB"),
-    "companion":  os.getenv("ELEVENLABS_VOICE_COMPANION",  "EXAVITQu4vr4xnSDxMaL"),
-    "guide":      os.getenv("ELEVENLABS_VOICE_GUIDE",      "AZnzlk1XvdvUeBnXmlld"),
-    "elder":      os.getenv("ELEVENLABS_VOICE_ELDER",      "onwK4e9ZLuTAKqWW03F9"),
+    "therapist": settings.ELEVENLABS_VOICE_THERAPIST,
+    "companion":  settings.ELEVENLABS_VOICE_COMPANION,
+    "guide":      settings.ELEVENLABS_VOICE_GUIDE,
+    "elder":      settings.ELEVENLABS_VOICE_ELDER,
 }
 
 # ── Language registry ─────────────────────────────────────────────────────────
@@ -128,8 +130,8 @@ _WPM: dict[str, int] = {
     "neutral": 175, "default": 160,
 }
 
-_MIN_BYTES    = 3_000
-_WHISPER_SIZE = os.getenv("WHISPER_MODEL_SIZE", "tiny")
+_MIN_BYTES    = 200   # WebM container header is ~200 bytes; any real audio is above this
+_WHISPER_SIZE = settings.WHISPER_MODEL_SIZE
 
 
 @dataclass
@@ -158,11 +160,16 @@ class MultilingualVoiceService:
         self._model              = None
         self._pyttsx3_engine     = None
         self._tts_backend        = None
-        self._elevenlabs_key     = os.getenv("ELEVENLABS_API_KEY", "")
-        self._elevenlabs_model   = os.getenv("ELEVENLABS_MODEL", "eleven_multilingual_v2")
-        self._elevenlabs_chars   = 0   # chars used this month (in-memory approx)
-        self._elevenlabs_limit   = 10_000
+        # Use settings (pydantic-settings reads .env; os.getenv would miss it)
+        self._elevenlabs_key     = settings.ELEVENLABS_API_KEY
+        self._elevenlabs_model   = settings.ELEVENLABS_MODEL
+        self._elevenlabs_chars   = 0   # chars used this session (in-memory)
+        self._elevenlabs_limit   = 500_000  # generous cap; real limit is per API plan
         self._init_tts()
+        if self._elevenlabs_key:
+            logger.info("MultilingualVoiceService | ElevenLabs API key loaded (%d chars)", len(self._elevenlabs_key))
+        else:
+            logger.warning("MultilingualVoiceService | No ElevenLabs API key — will use gTTS")
 
     # ── Initialisation ────────────────────────────────────────────────────────
 
@@ -194,34 +201,94 @@ class MultilingualVoiceService:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
+    def _to_wav(self, audio_bytes: bytes, fmt: str) -> bytes:
+        """
+        Converts any browser audio (WebM/Opus from Chrome, OGG, MP4) to
+        16 kHz mono PCM WAV using the `av` library (already installed with
+        faster-whisper). Does NOT require pydub, audioop, or FFmpeg binary.
+        """
+        import av as _av
+        import numpy as np
+
+        buf_in = io.BytesIO(audio_bytes)
+        pcm_chunks: list[np.ndarray] = []
+
+        resampler = _av.audio.resampler.AudioResampler(
+            format="s16",
+            layout="mono",
+            rate=16000,
+        )
+
+        with _av.open(buf_in) as container:
+            for frame in container.decode(audio=0):
+                for out_frame in resampler.resample(frame):
+                    pcm_chunks.append(out_frame.to_ndarray())
+
+        # Flush resampler
+        for out_frame in resampler.resample(None):
+            pcm_chunks.append(out_frame.to_ndarray())
+
+        if not pcm_chunks:
+            raise ValueError("No audio frames decoded")
+
+        pcm = np.concatenate(pcm_chunks, axis=1).flatten().astype(np.int16)
+
+        # Write standard PCM WAV (no external dependencies)
+        import struct, wave as _wave
+        buf_out = io.BytesIO()
+        with _wave.open(buf_out, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)        # 16-bit
+            wf.setframerate(16000)
+            wf.writeframes(pcm.tobytes())
+
+        wav_bytes = buf_out.getvalue()
+        duration_s = len(pcm) / 16000
+        logger.debug(
+            "Audio converted: %d bytes %s → %d bytes WAV (%.1fs)",
+            len(audio_bytes), fmt, len(wav_bytes), duration_s,
+        )
+        return wav_bytes
+
     def transcribe(self, audio_bytes: bytes, fmt: str = "webm", language: str | None = None) -> TranscriptionResult:
         """
         Single Whisper pass: detects language AND transcribes simultaneously.
-        If *language* is provided (e.g. "hi"), Whisper is forced to that language
-        instead of auto-detecting, which prevents mis-detection.
-        Returns TranscriptionResult. Never raises — returns empty result on error.
+        Converts audio to 16kHz mono WAV before sending to Whisper for maximum
+        reliability with Chrome WebM/Opus recordings on Windows.
         """
         if len(audio_bytes) < _MIN_BYTES:
+            logger.warning("Audio too small (%d bytes) — skipping", len(audio_bytes))
             return TranscriptionResult("", "en", "English", 0.0)
 
         self._load_whisper()
 
-        suffix   = f".{fmt}" if fmt else ".webm"
         tmp_path = None
         try:
+            # Convert to WAV — avoids WebM/Opus decoding issues in faster-whisper on Windows
+            try:
+                wav_bytes = self._to_wav(audio_bytes, fmt)
+            except Exception as conv_err:
+                logger.warning("Audio conversion failed (%s) — using raw %s file", conv_err, fmt)
+                wav_bytes = None
+
+            if wav_bytes and len(wav_bytes) > 500:
+                suffix = ".wav"
+                data   = wav_bytes
+            else:
+                suffix = f".{fmt}" if fmt else ".webm"
+                data   = audio_bytes
+
             with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-                tmp.write(audio_bytes)
+                tmp.write(data)
                 tmp_path = tmp.name
 
-            # If a language hint was provided, force Whisper to that language;
-            # otherwise auto-detect (language=None).
             whisper_lang = language if language and language in _LANG_META else None
             segments, info = self._model.transcribe(
                 tmp_path,
                 language=whisper_lang,
-                vad_filter=True,
-                vad_parameters={"min_silence_duration_ms": 300},
+                vad_filter=False,
                 beam_size=5,
+                condition_on_previous_text=False,
             )
 
             code = info.language

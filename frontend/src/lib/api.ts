@@ -140,15 +140,12 @@ export async function sendChatMessage(
   token: string,
   message: string,
   language_code = "en",
+  source: "text" | "voice" = "text",
 ): Promise<ChatApiResponse> {
   return request<ChatApiResponse>("/chat", {
     method: "POST",
     token,
-    body: {
-      message,
-      language_code,
-      source: "text",
-    },
+    body: { message, language_code, source },
   });
 }
 

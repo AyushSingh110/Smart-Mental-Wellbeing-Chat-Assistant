@@ -73,19 +73,10 @@ export function ChatPage() {
     return () => { if (statusTimer.current) clearTimeout(statusTimer.current); };
   }, [status]);
 
-  function handleTranscript(text: string, confidence?: number, detectedLangCode?: string) {
-    setDraft((prev) => {
-      const trimmed = prev.trimEnd();
-      return trimmed ? `${trimmed} ${text}` : text;
-    });
-    if (confidence !== undefined) setWhisperConfidence(confidence);
-    if (detectedLangCode) setLanguageCode(detectedLangCode);
-  }
-
-  async function speakResponse(text: string, tier: string, emotion: string) {
+  async function speakResponse(text: string, tier: string, emotion: string, langCode: string) {
     if (!token) return;
     try {
-      const { audioUrl, durationMs } = await avatarSpeak(token, text, languageCode, avatarId, emotion, tier);
+      const { audioUrl, durationMs } = await avatarSpeak(token, text, langCode, avatarId, emotion, tier);
       setAvatarAudioUrl(audioUrl);
       setAvatarDuration(durationMs);
       setAvatarSpeaking(true);
@@ -94,29 +85,26 @@ export function ChatPage() {
     }
   }
 
-  const suggestions = [
-    "I am feeling overwhelmed today",
-    "Help me slow down for a minute",
-    "I want to reflect on what triggered me",
-  ];
+  async function submitMessage(
+    text: string,
+    langCode: string,
+    source: "text" | "voice" = "text",
+  ) {
+    if (!token || !text.trim() || isSending) return;
 
-  async function handleSend() {
-    if (!token || !draft.trim() || isSending) return;
-
-    const text      = draft.trim();
+    const trimmed   = text.trim();
     const timestamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
     setIsSending(true);
-    setStatus("Analyzing message…");
-    setDraft("");
+    setStatus(source === "voice" ? "Transcribed — analyzing…" : "Analyzing message…");
 
     setEntries((prev) => [
       ...prev,
-      { id: `user-${Date.now()}`, role: "user", content: text, timestamp },
+      { id: `user-${Date.now()}`, role: "user", content: trimmed, timestamp },
     ]);
 
     try {
-      const result = await sendChatMessage(token, text, languageCode);
+      const result = await sendChatMessage(token, trimmed, langCode, source);
 
       if (result.crisis_tier) setCrisisTier(null);
 
@@ -154,7 +142,7 @@ export function ChatPage() {
 
       const topEmotion = Object.entries(result.emotion_scores)
         .sort(([, a], [, b]) => b - a)[0]?.[0] ?? "default";
-      void speakResponse(result.response, result.crisis_tier, topEmotion);
+      void speakResponse(result.response, result.crisis_tier, topEmotion, langCode);
 
     } catch (err) {
       setStatus(err instanceof Error ? err.message : "Chat request failed.");
@@ -162,6 +150,29 @@ export function ChatPage() {
       setIsSending(false);
     }
   }
+
+  // Called by text Composer
+  async function handleSend() {
+    const text = draft.trim();
+    if (!text || isSending) return;
+    setDraft("");
+    await submitMessage(text, languageCode, "text");
+  }
+
+  // Called by VoiceOrb after Whisper transcription — auto-sends for speech-to-speech
+  function handleTranscript(text: string, confidence?: number, detectedLangCode?: string) {
+    const effectiveLang = detectedLangCode ?? languageCode;
+    setDraft(text);  // show transcript in composer so user can see what was heard
+    if (confidence !== undefined) setWhisperConfidence(confidence);
+    if (detectedLangCode) setLanguageCode(detectedLangCode);
+    void submitMessage(text, effectiveLang, "voice");  // auto-send for speech-to-speech
+  }
+
+  const suggestions = [
+    "I am feeling overwhelmed today",
+    "Help me slow down for a minute",
+    "I want to reflect on what triggered me",
+  ];
 
   return (
     <div className="space-y-4">
