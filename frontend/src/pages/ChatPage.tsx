@@ -1,37 +1,34 @@
 import { useEffect, useRef, useState } from "react";
+import { AlertCircle, AlertTriangle } from "lucide-react";
 
-import { AvatarPanel }        from "../components/chat/AvatarPanel";
-import { CBTCard }             from "../components/chat/CBTCard";
-import { Composer }            from "../components/chat/Composer";
-import { ConversationPanel }   from "../components/chat/ConversationPanel";
-import { CrisisOverlay }       from "../components/chat/CrisisOverlay";
-import { VoiceOrb }            from "../components/chat/VoiceOrb";
-import { PageHeader }          from "../components/shared/PageHeader";
+import { AvatarPanel }      from "../components/chat/AvatarPanel";
+import { CBTCard }           from "../components/chat/CBTCard";
+import { Composer }          from "../components/chat/Composer";
+import { ConversationPanel } from "../components/chat/ConversationPanel";
+import { CrisisOverlay }     from "../components/chat/CrisisOverlay";
+import { VoiceOrb }          from "../components/chat/VoiceOrb";
 import { avatarSpeak, getConversationHistory, sendChatMessage } from "../lib/api";
-import { useAuth }             from "../lib/auth";
+import { useAuth }           from "../lib/auth";
 import type { ConversationEntry } from "../types";
 
-// ── Web Audio API: play alert tone via OscillatorNode (no network request)
 function playAlertTone(type: "crisis" | "velocity" = "crisis") {
   try {
-    const ctx = new AudioContext();
-    const osc = ctx.createOscillator();
+    const ctx  = new AudioContext();
+    const osc  = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.connect(gain);
     gain.connect(ctx.destination);
 
     if (type === "crisis") {
-      // 220 Hz → 180 Hz descending tone, 0.6s — signals urgency
       osc.frequency.setValueAtTime(220, ctx.currentTime);
       osc.frequency.linearRampToValueAtTime(180, ctx.currentTime + 0.6);
-      gain.gain.setValueAtTime(0.18, ctx.currentTime);
+      gain.gain.setValueAtTime(0.15, ctx.currentTime);
       gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.6);
       osc.start(ctx.currentTime);
       osc.stop(ctx.currentTime + 0.6);
     } else {
-      // Velocity pre-alert: 440 Hz soft blip, 0.25s
       osc.frequency.setValueAtTime(440, ctx.currentTime);
-      gain.gain.setValueAtTime(0.08, ctx.currentTime);
+      gain.gain.setValueAtTime(0.07, ctx.currentTime);
       gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.25);
       osc.start(ctx.currentTime);
       osc.stop(ctx.currentTime + 0.25);
@@ -39,28 +36,28 @@ function playAlertTone(type: "crisis" | "velocity" = "crisis") {
 
     osc.onended = () => { ctx.close().catch(() => {}); };
   } catch {
-    // AudioContext unavailable — silent fallback
+    // AudioContext unavailable
   }
 }
 
 export function ChatPage() {
-  const { token, user }                             = useAuth();
-  const [entries, setEntries]                       = useState<ConversationEntry[]>([]);
-  const [draft, setDraft]                           = useState("");
-  const [status, setStatus]                         = useState("");
-  const [isSending, setIsSending]                   = useState(false);
-  const [languageCode, setLanguageCode]             = useState(user?.preferredLanguage ?? "en");
-  const [crisisTier, setCrisisTier]                 = useState<"active" | "passive" | null>(null);
-  const [showCrisisOverlay, setShowCrisisOverlay]   = useState(false);
-  const [mhiDropAlert, setMhiDropAlert]             = useState(false);
-  const [velocityAlert, setVelocityAlert]           = useState(false);
-  const [activeCBT, setActiveCBT]                   = useState<string | null>(null);
-  const [avatarAudioUrl, setAvatarAudioUrl]         = useState<string | null>(null);
-  const [whisperConfidence, setWhisperConfidence]   = useState<number | undefined>(undefined);
-  const [avatarSpeaking, setAvatarSpeaking]         = useState(false);
-  const [avatarDuration, setAvatarDuration]         = useState(2000);
-  const prevMhiRef                                  = useRef<number | null>(null);
-  const statusTimer                                 = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { token, user }                           = useAuth();
+  const [entries, setEntries]                     = useState<ConversationEntry[]>([]);
+  const [draft, setDraft]                         = useState("");
+  const [status, setStatus]                       = useState("");
+  const [isSending, setIsSending]                 = useState(false);
+  const [languageCode, setLanguageCode]           = useState(user?.preferredLanguage ?? "en");
+  const [crisisTier, setCrisisTier]               = useState<"active" | "passive" | null>(null);
+  const [showCrisisOverlay, setShowCrisisOverlay] = useState(false);
+  const [mhiDropAlert, setMhiDropAlert]           = useState(false);
+  const [velocityAlert, setVelocityAlert]         = useState(false);
+  const [activeCBT, setActiveCBT]                 = useState<string | null>(null);
+  const [avatarAudioUrl, setAvatarAudioUrl]       = useState<string | null>(null);
+  const [whisperConfidence, setWhisperConfidence] = useState<number | undefined>(undefined);
+  const [avatarSpeaking, setAvatarSpeaking]       = useState(false);
+  const [avatarDuration, setAvatarDuration]       = useState(2000);
+  const prevMhiRef                                = useRef<number | null>(null);
+  const statusTimer                               = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const avatarId = user?.avatarId ?? "therapist";
 
@@ -69,7 +66,6 @@ export function ChatPage() {
     void getConversationHistory(token).then(setEntries);
   }, [token]);
 
-  // Auto-clear status after 4 s
   useEffect(() => {
     if (!status) return;
     if (statusTimer.current) clearTimeout(statusTimer.current);
@@ -77,7 +73,6 @@ export function ChatPage() {
     return () => { if (statusTimer.current) clearTimeout(statusTimer.current); };
   }, [status]);
 
-  // VoiceOrb → appends transcript to draft + records confidence + updates active language
   function handleTranscript(text: string, confidence?: number, detectedLangCode?: string) {
     setDraft((prev) => {
       const trimmed = prev.trimEnd();
@@ -87,18 +82,15 @@ export function ChatPage() {
     if (detectedLangCode) setLanguageCode(detectedLangCode);
   }
 
-  // Speak assistant response via avatar
   async function speakResponse(text: string, tier: string, emotion: string) {
     if (!token) return;
     try {
-      const { audioUrl, durationMs } = await avatarSpeak(
-        token, text, languageCode, avatarId, emotion, tier,
-      );
+      const { audioUrl, durationMs } = await avatarSpeak(token, text, languageCode, avatarId, emotion, tier);
       setAvatarAudioUrl(audioUrl);
       setAvatarDuration(durationMs);
       setAvatarSpeaking(true);
     } catch {
-      // Non-fatal — voice is optional
+      // voice is optional, non-fatal
     }
   }
 
@@ -126,24 +118,20 @@ export function ChatPage() {
     try {
       const result = await sendChatMessage(token, text, languageCode);
 
-      // Update language from response (server may override)
-      if (result.crisis_tier) setCrisisTier(null); // reset before check
+      if (result.crisis_tier) setCrisisTier(null);
 
-      // MHI drop alert: if drops > 15 points
       if (prevMhiRef.current !== null && prevMhiRef.current - result.mhi > 15) {
         setMhiDropAlert(true);
         setTimeout(() => setMhiDropAlert(false), 6000);
       }
       prevMhiRef.current = result.mhi;
 
-      // Crisis overlay + alert tone
       if (result.crisis_tier === "active" || result.crisis_tier === "passive") {
         setCrisisTier(result.crisis_tier as "active" | "passive");
         setShowCrisisOverlay(true);
         playAlertTone("crisis");
       }
 
-      // Velocity pre-alert: escalating distress across turns
       if (result.pre_voice_alert && result.crisis_tier === "none") {
         setVelocityAlert(true);
         setTimeout(() => setVelocityAlert(false), 5000);
@@ -164,7 +152,6 @@ export function ChatPage() {
       setEntries((prev) => [...prev, assistantEntry]);
       setStatus("Response received.");
 
-      // Trigger avatar speech
       const topEmotion = Object.entries(result.emotion_scores)
         .sort(([, a], [, b]) => b - a)[0]?.[0] ?? "default";
       void speakResponse(result.response, result.crisis_tier, topEmotion);
@@ -178,58 +165,57 @@ export function ChatPage() {
 
   return (
     <div className="space-y-4">
-      {/* Crisis full-screen overlay */}
+      {/* Active crisis full-screen overlay */}
       {showCrisisOverlay && crisisTier === "active" && (
-        <CrisisOverlay
-          crisisTier="active"
-          onDismiss={() => setShowCrisisOverlay(false)}
-        />
+        <CrisisOverlay crisisTier="active" onDismiss={() => setShowCrisisOverlay(false)} />
       )}
 
-      <PageHeader
-        eyebrow="Chat"
-        title="A calm conversation space for reflection and gentle support"
-        description="Speak or type — the assistant listens in any language and responds with care."
-      />
+      {/* Page header */}
+      <div>
+        <p className="label-caps">Chat</p>
+        <h1 className="mt-1.5 text-[20px] font-bold text-white" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+          A calm space for reflection and support
+        </h1>
+        <p className="mt-1 text-[13px]" style={{ color: "#7a92a8" }}>
+          Speak or type — the assistant listens in any language and responds with care.
+        </p>
+      </div>
 
-      {/* Passive crisis persistent banner */}
+      {/* Passive crisis banner */}
       {crisisTier === "passive" && (
         <CrisisOverlay crisisTier="passive" onDismiss={() => setCrisisTier(null)} />
       )}
 
-      {/* Velocity pre-alert: escalating distress */}
+      {/* Velocity alert banner */}
       {velocityAlert && (
         <div
-          className="rounded-[14px] px-4 py-3 text-[13px] text-center"
-          style={{
-            background: "rgba(255,123,112,0.06)",
-            border: "1px solid rgba(255,123,112,0.18)",
-            color: "#ff7b70",
-            animation: "fadeIn 0.3s ease forwards",
-          }}
+          className="flex items-start gap-3 rounded-xl px-4 py-3"
+          style={{ background: "rgba(181,130,42,0.08)", border: "1px solid rgba(181,130,42,0.25)" }}
         >
-          Your distress seems to be building. I'm paying close attention — take your time.
+          <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" style={{ color: "#b5822a" }} />
+          <p className="text-[13px] leading-relaxed" style={{ color: "#b5822a" }}>
+            Your distress seems to be building. I&apos;m paying close attention — take your time.
+          </p>
         </div>
       )}
 
-      {/* MHI drop in-chat alert */}
+      {/* MHI drop alert */}
       {mhiDropAlert && (
         <div
-          className="rounded-[14px] px-4 py-3 text-[13px] text-center animate-pulse"
-          style={{
-            background: "rgba(255,201,107,0.07)",
-            border: "1px solid rgba(255,201,107,0.2)",
-            color: "#ffc96b",
-          }}
+          className="flex items-start gap-3 rounded-xl px-4 py-3"
+          style={{ background: "rgba(74,132,214,0.07)", border: "1px solid rgba(74,132,214,0.22)" }}
         >
-          I noticed things seem heavier right now. I&apos;m here with you.
+          <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" style={{ color: "#4a84d6" }} />
+          <p className="text-[13px] leading-relaxed" style={{ color: "#7a92a8" }}>
+            I noticed things seem heavier right now. I&apos;m here with you.
+          </p>
         </div>
       )}
 
-      {/* Main grid: Avatar (40%) | Conversation (60%) */}
+      {/* Main grid: Avatar (left) | Conversation (right) */}
       <div className="grid gap-4 lg:grid-cols-[2fr_3fr]">
-        {/* Left: Avatar panel */}
-        <div className="flex flex-col gap-4">
+        {/* Left: Avatar + Voice orb */}
+        <div className="flex flex-col gap-3">
           <AvatarPanel
             avatarId={avatarId}
             speakAudioUrl={avatarAudioUrl}
@@ -239,7 +225,6 @@ export function ChatPage() {
             onSpeakEnd={() => setAvatarSpeaking(false)}
             crisisTier={crisisTier}
           />
-          {/* Voice orb below avatar on desktop */}
           <VoiceOrb
             token={token}
             onTranscript={handleTranscript}
@@ -257,30 +242,30 @@ export function ChatPage() {
         />
       </div>
 
-      {/* Active CBT panel card */}
+      {/* Active CBT card */}
       {activeCBT && (
         <div
-          className="rounded-[20px] p-4"
-          style={{
-            background: "rgba(108,227,207,0.05)",
-            border: "1px solid rgba(108,227,207,0.15)",
-          }}
+          className="rounded-2xl p-4"
+          style={{ background: "#172032", border: "1px solid rgba(55,75,105,0.5)" }}
         >
           <div className="flex items-center justify-between mb-3">
-            <p className="text-[13px] font-semibold text-[#6ce3cf]">
+            <p className="text-[12px] font-semibold" style={{ color: "#6a5acd" }}>
               Self-Help Exercise
             </p>
             <button
               type="button"
               onClick={() => setActiveCBT(null)}
-              className="text-[11px] text-slate-500 hover:text-white transition-colors"
+              className="text-[11px] transition-colors"
+              style={{ color: "#4a6278" }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = "#c8d8ea"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = "#4a6278"; }}
             >
               Close
             </button>
           </div>
           <CBTCard technique={activeCBT} onOpen={() => {}} />
-          <p className="mt-3 text-[12px] text-slate-500">
-            Full interactive CBT exercises are available in the Self-Help Tools tab.
+          <p className="mt-3 text-[11px]" style={{ color: "#4a6278" }}>
+            Full interactive CBT exercises are available in the Self-Help Tools tab of the Dashboard.
           </p>
         </div>
       )}
@@ -298,23 +283,22 @@ export function ChatPage() {
       {/* Status bar */}
       {status && (
         <div
-          className="rounded-[12px] px-4 py-3 text-[13px] text-center transition-all duration-300"
+          className="flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-[12px] transition-all duration-300"
           style={{
-            background: isSending ? "rgba(108,227,207,0.06)" : "rgba(255,255,255,0.03)",
-            border: "1px solid rgba(255,255,255,0.06)",
+            background: "rgba(255,255,255,0.02)",
+            border: "1px solid rgba(55,75,105,0.3)",
             color: status.toLowerCase().includes("fail") || status.toLowerCase().includes("error")
-              ? "#ff7b70"
-              : "#94a3b8",
+              ? "#c04040" : "#7a92a8",
           }}
         >
           {isSending && (
-            <span className="mr-2 inline-block h-3 w-3 animate-spin rounded-full border-2 border-[#6ce3cf]/20 border-t-[#6ce3cf]" />
+            <span className="h-3.5 w-3.5 rounded-full border-2 animate-spinSlow shrink-0"
+              style={{ borderColor: "rgba(74,132,214,0.2)", borderTopColor: "#4a84d6" }} />
           )}
           {status}
         </div>
       )}
 
-      {/* Hidden language state setter — used by VoiceOrb when server returns a language */}
       <input type="hidden" value={languageCode} onChange={(e) => setLanguageCode(e.target.value)} />
     </div>
   );

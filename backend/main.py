@@ -240,6 +240,22 @@ def root():
     }
 
 
+@app.get("/health", summary="Health check", tags=["Ops"])
+async def health():
+    """Liveness probe used by load balancers and deployment pipelines."""
+    db_ok = False
+    try:
+        await db.db.command("ping")
+        db_ok = True
+    except Exception:
+        pass
+    return {
+        "status":  "ok" if db_ok else "degraded",
+        "version": settings.APP_VERSION,
+        "db":      "connected" if db_ok else "unreachable",
+    }
+
+
 
 @app.options("/voice/transcribe", include_in_schema=False)
 async def options_voice_transcribe():
@@ -682,7 +698,14 @@ async def user_dashboard_summary(
 ):
     user = await db.users.find_one({"_id": user_id}) or {}
     recent = await db.get_recent_conversations(user_id, limit=7)
-    recent_sorted = sorted(recent, key=lambda item: item.get("timestamp") or datetime.utcnow())
+
+    def _ts(item) -> datetime:
+        ts = item.get("timestamp")
+        if isinstance(ts, datetime):
+            return ts.replace(tzinfo=None) if ts.tzinfo else ts
+        return datetime.utcnow()
+
+    recent_sorted = sorted(recent, key=_ts)
 
     latest_mhi = int(
         (recent_sorted[-1].get("mhi") if recent_sorted else None)
@@ -710,16 +733,18 @@ async def user_dashboard_summary(
             for label, score in sorted(emotion_totals.items(), key=lambda item: item[1], reverse=True)[:5]
         ]
     else:
-        emotion_mix = [{"label": "Calm", "value": 100}]
+        emotion_mix = [{"label": "Neutral", "value": 100}]
 
     recent_sessions = []
     for index, entry in enumerate(reversed(recent_sorted[-5:]), start=1):
+        scores = entry.get("emotion_scores") or {"neutral": 1}
+        top_emotion = max(scores, key=scores.get) if scores else "neutral"
         recent_sessions.append(
             {
                 "id": str(index),
-                "time": (entry.get("timestamp") or datetime.utcnow()).isoformat(),
+                "time": _ts(entry).isoformat(),
                 "summary": (entry.get("message") or "")[:140] or "Well-being check-in",
-                "mood": max((entry.get("emotion_scores") or {"calm": 1}).items(), key=lambda kv: kv[1])[0].replace("_", " ").title(),
+                "mood": top_emotion,
                 "mhi": int(entry.get("mhi", latest_mhi)),
             }
         )

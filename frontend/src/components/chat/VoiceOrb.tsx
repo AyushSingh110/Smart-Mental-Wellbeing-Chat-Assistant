@@ -252,93 +252,78 @@ export function VoiceOrb({
 
   return (
     <article
-      className="flex flex-col rounded-[20px] p-5"
-      style={{
-        background: "rgba(255,255,255,0.028)",
-        border: "1px solid rgba(255,255,255,0.07)",
-      }}
+      className="flex flex-col rounded-2xl p-5"
+      style={{ background: "#172032", border: "1px solid rgba(55,75,105,0.5)" }}
     >
       {/* Header */}
       <div>
-        <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-500">
-          Voice input
-        </p>
-        <h3
-          className="mt-1.5 text-[16px] font-semibold text-white"
-          style={{ fontFamily: "'Space Grotesk', sans-serif" }}
-        >
+        <p className="label-caps">Voice input</p>
+        <h3 className="mt-1.5 text-[15px] font-semibold text-white" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
           Speak in any language
         </h3>
-        <p className="mt-0.5 text-[11px] text-slate-600">
+        <p className="mt-0.5 text-[11px]" style={{ color: "#4a6278" }}>
           Hindi, Tamil, Telugu, Bengali &amp; 10 more — auto-detected
         </p>
       </div>
 
       {/* Orb */}
-      <div className="my-6 flex flex-col items-center gap-5">
+      <div className="my-5 flex flex-col items-center gap-4">
         <button
           type="button"
           onClick={toggleListening}
           disabled={orbDisabled}
           aria-label={isListening ? "Stop recording" : "Start recording"}
-          className="group relative flex h-[120px] w-[120px] items-center justify-center rounded-full transition-transform duration-200 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+          className="group relative flex h-[100px] w-[100px] items-center justify-center rounded-full transition-transform duration-150 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
           style={{ outline: "none" }}
         >
-          {/* Pulse rings while recording */}
+          {/* Pulse ring while recording */}
           {isListening && (
-            <>
-              <span className="absolute inset-0 rounded-full animate-ping opacity-20"
-                style={{ background: "rgba(108,227,207,0.4)" }} />
-              <span className="absolute -inset-3 rounded-full border border-[#6ce3cf]/20 animate-pulse" />
-              <span className="absolute -inset-6 rounded-full border border-[#6ce3cf]/10 animate-pulse"
-                style={{ animationDelay: "0.3s" }} />
-            </>
+            <span className="absolute inset-0 rounded-full animate-ping opacity-15"
+              style={{ background: "rgba(74,132,214,0.35)" }} />
           )}
 
-          {/* Processing spinner rings */}
+          {/* Processing spinner */}
           {isProcessing && (
-            <span className="absolute inset-0 rounded-full border-2 border-[#ffc96b]/30 border-t-[#ffc96b] animate-spin" />
+            <span className="absolute inset-0 rounded-full border-2 animate-spinSlow"
+              style={{ borderColor: "rgba(181,130,42,0.25)", borderTopColor: "#b5822a" }} />
           )}
 
           <div
-            className="relative flex h-[120px] w-[120px] items-center justify-center rounded-full transition-all duration-300"
+            className="relative flex h-[100px] w-[100px] items-center justify-center rounded-full transition-all duration-200"
             style={{
               background: isListening
-                ? "linear-gradient(135deg, #6ce3cf 0%, #2cb8c7 100%)"
+                ? "#4a84d6"
                 : isProcessing
-                ? "rgba(255,201,107,0.1)"
-                : "rgba(255,255,255,0.06)",
+                ? "rgba(181,130,42,0.1)"
+                : "#1d2940",
               border: isListening
-                ? "2px solid rgba(108,227,207,0.5)"
+                ? "2px solid rgba(74,132,214,0.6)"
                 : isProcessing
-                ? "2px solid rgba(255,201,107,0.3)"
-                : "2px solid rgba(255,255,255,0.1)",
-              boxShadow: isListening
-                ? "0 0 40px rgba(108,227,207,0.35), 0 0 80px rgba(108,227,207,0.1)"
-                : "none",
+                ? "2px solid rgba(181,130,42,0.35)"
+                : "2px solid rgba(55,75,105,0.5)",
             }}
           >
             {isListening ? (
-              <Square className="h-8 w-8 text-[#09111f]" strokeWidth={2} fill="currentColor" />
+              <Square className="h-7 w-7 text-white" strokeWidth={2} fill="currentColor" />
             ) : isProcessing ? (
-              <span className="text-[11px] font-semibold text-[#ffc96b]">AI</span>
+              <span className="text-[11px] font-semibold" style={{ color: "#b5822a" }}>AI</span>
             ) : (
-              <Mic className="h-10 w-10 text-slate-300 transition-colors group-hover:text-white" strokeWidth={1.5} />
+              <Mic className="h-9 w-9 transition-colors" style={{ color: "#7a92a8" }} strokeWidth={1.5} />
             )}
           </div>
         </button>
 
-        {/* Waveform visualizer — only while recording */}
+        {/* Waveform while recording */}
         {isListening && (
-          <div className="flex items-end gap-[2px]" style={{ height: 32, width: 120 }}>
+          <div className="flex items-end gap-[2px]" style={{ height: 28, width: 100 }}>
             {waveformBars.map((h, i) => (
               <div
                 key={i}
                 className="rounded-full flex-1"
                 style={{
                   height: `${Math.max(8, h)}%`,
-                  background: "linear-gradient(to top, #6ce3cf, #2cb8c7)",
-                  opacity: 0.5 + (h / 100) * 0.5,
+                  background: "#4a84d6",
+                  opacity: 0.4 + (h / 100) * 0.6,
                   transition: "height 0.08s ease",
                   minWidth: 3,
                 }}
@@ -349,44 +334,37 @@ export function VoiceOrb({
 
         {/* Status text */}
         <p
-          className="text-[13px] text-center leading-relaxed"
+          className="text-[12px] text-center leading-relaxed"
           style={{
-            color: state === "error"      ? "#ff7b70"
-                 : isListening            ? "#6ce3cf"
-                 : isProcessing           ? "#ffc96b"
-                 : "#64748b",
+            color: state === "error"  ? "#c04040"
+                 : isListening        ? "#4a84d6"
+                 : isProcessing       ? "#b5822a"
+                 : "#4a6278",
           }}
         >
           {STATUS_TEXT[state]}
         </p>
 
-        {/* Transcript result with language badge */}
+        {/* Transcript result */}
         {transcript && (
           <div
-            className="w-full rounded-[14px] p-4"
-            style={{
-              background: "rgba(108,227,207,0.06)",
-              border: "1px solid rgba(108,227,207,0.14)",
-            }}
+            className="w-full rounded-xl p-4"
+            style={{ background: "rgba(74,132,214,0.07)", border: "1px solid rgba(74,132,214,0.18)" }}
           >
             <div className="flex items-center justify-between mb-2">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6ce3cf]/60">
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em]" style={{ color: "#4a6278" }}>
                 Transcript
               </p>
               {detectedLang && (
                 <span
-                  className="rounded-full px-2 py-0.5 text-[10px] font-medium"
-                  style={{
-                    background: "rgba(108,227,207,0.12)",
-                    border: "1px solid rgba(108,227,207,0.2)",
-                    color: "#6ce3cf",
-                  }}
+                  className="rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                  style={{ background: "rgba(74,132,214,0.12)", border: "1px solid rgba(74,132,214,0.22)", color: "#4a84d6" }}
                 >
                   {detectedLang}
                 </span>
               )}
             </div>
-            <p className="text-[13px] leading-relaxed text-slate-300">{transcript}</p>
+            <p className="text-[13px] leading-relaxed" style={{ color: "#c8d8ea" }}>{transcript}</p>
           </div>
         )}
       </div>
@@ -394,21 +372,18 @@ export function VoiceOrb({
       {/* Info tiles */}
       <div className="mt-auto grid grid-cols-3 gap-2">
         {[
-          { icon: <Mic className="h-3.5 w-3.5" />,         label: "Engine",       value: "OpenAI Whisper" },
-          { icon: <AudioLines className="h-3.5 w-3.5" />,  label: "Languages",    value: "14 Indian + EN" },
-          { icon: <ShieldCheck className="h-3.5 w-3.5" />, label: "Safety layer", value: "Context-aware" },
+          { icon: <Mic className="h-3 w-3" />,         label: "Engine",       value: "Whisper" },
+          { icon: <AudioLines className="h-3 w-3" />,  label: "Languages",    value: "14 + EN" },
+          { icon: <ShieldCheck className="h-3 w-3" />, label: "Safety",       value: "Context-aware" },
         ].map((item) => (
           <div
             key={item.label}
-            className="rounded-[12px] p-3"
-            style={{
-              background: "rgba(255,255,255,0.02)",
-              border: "1px solid rgba(255,255,255,0.05)",
-            }}
+            className="rounded-xl p-2.5"
+            style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(55,75,105,0.35)" }}
           >
-            <div className="text-[#6ce3cf]/70">{item.icon}</div>
-            <p className="mt-2 text-[10px] uppercase tracking-[0.16em] text-slate-600">{item.label}</p>
-            <p className="mt-1 text-[11px] font-medium text-slate-400">{item.value}</p>
+            <div style={{ color: "#4a6278" }}>{item.icon}</div>
+            <p className="mt-1.5 text-[9px] uppercase tracking-[0.16em]" style={{ color: "#4a6278" }}>{item.label}</p>
+            <p className="mt-0.5 text-[10px] font-medium" style={{ color: "#7a92a8" }}>{item.value}</p>
           </div>
         ))}
       </div>

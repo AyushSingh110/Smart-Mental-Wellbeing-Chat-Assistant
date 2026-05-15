@@ -43,14 +43,23 @@ export default function App() {
 
   if (isLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-ink px-6 text-slate-200">
-        <div className="surface-card animate-rise-in rounded-[32px] border border-white/10 px-8 py-7 text-center shadow-halo">
-          <p className="text-xs uppercase tracking-[0.34em] text-brand-300">Preparing</p>
-          <h1 className="mt-3 font-display text-2xl font-semibold text-white">
-            Loading your calm workspace
+      <div
+        className="flex min-h-screen items-center justify-center px-6"
+        style={{ background: "#0c1220" }}
+      >
+        <div
+          className="rounded-[24px] px-8 py-7 text-center"
+          style={{ background: "#172032", border: "1px solid rgba(55,75,105,0.5)" }}
+        >
+          <p className="label-caps" style={{ color: "#4a84d6" }}>Preparing</p>
+          <h1
+            className="mt-3 text-2xl font-semibold text-white"
+            style={{ fontFamily: "'Space Grotesk', sans-serif" }}
+          >
+            Loading your workspace
           </h1>
-          <p className="mt-3 text-sm text-slate-400">
-            Bringing together your latest progress, history, and secure session.
+          <p className="mt-3 text-sm" style={{ color: "#7a92a8" }}>
+            Bringing together your latest progress and secure session.
           </p>
         </div>
       </div>

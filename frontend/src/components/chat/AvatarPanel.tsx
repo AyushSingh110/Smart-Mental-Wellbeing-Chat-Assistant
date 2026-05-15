@@ -149,17 +149,14 @@ export function AvatarPanel({
     <div className="flex flex-col items-center gap-3">
       {/* ── Portrait video-call frame (9:16 aspect) */}
       <div
-        className="relative w-full overflow-hidden rounded-[20px]"
+        className="relative w-full overflow-hidden rounded-2xl"
         style={{
           aspectRatio: "9/16",
-          maxHeight: "360px",
-          background: `radial-gradient(ellipse at 50% 30%, ${accent}18 0%, #111c31 70%)`,
+          maxHeight: "340px",
+          background: "#172032",
           border: isCrisis
-            ? "2px solid rgba(255, 80, 80, 0.7)"
-            : `2px solid ${accent}30`,
-          boxShadow: isCrisis
-            ? "0 0 0 4px rgba(255, 80, 80, 0.15), 0 0 24px rgba(255, 80, 80, 0.2)"
-            : `0 0 0 1px ${accent}15`,
+            ? "2px solid rgba(192,64,64,0.6)"
+            : "1px solid rgba(55,75,105,0.5)",
           animation: isCrisis ? "crisisPulse 1.5s ease-in-out infinite" : undefined,
         }}
       >
@@ -168,13 +165,12 @@ export function AvatarPanel({
           <span
             className="h-2 w-2 rounded-full"
             style={{
-              background: isCrisis ? "#ff5050" : (isSpeaking ? accent : "#7be495"),
-              boxShadow: `0 0 6px ${isCrisis ? "#ff5050" : accent}`,
+              background: isCrisis ? "#c04040" : (isSpeaking ? "#4a84d6" : "#3d8a5c"),
               animation: "livePulse 2s ease-in-out infinite",
             }}
           />
           <span className="text-[10px] font-semibold uppercase tracking-widest"
-            style={{ color: isCrisis ? "#ff7b70" : "#94a3b8" }}>
+            style={{ color: isCrisis ? "#c04040" : "#7a92a8" }}>
             {isCrisis ? "SOS" : "LIVE"}
           </span>
         </div>
@@ -186,10 +182,10 @@ export function AvatarPanel({
             <div
               className="relative flex items-center justify-center rounded-full"
               style={{
-                width: 96,
-                height: 96,
-                background: `radial-gradient(circle at 40% 35%, ${accent}22, ${accent}08)`,
-                border: `2px solid ${accent}30`,
+                width: 88,
+                height: 88,
+                background: "#1d2940",
+                border: "2px solid rgba(55,75,105,0.5)",
                 animation: isSpeaking
                   ? "headBob 0.8s ease-in-out infinite"
                   : "avatarBreathe 4s ease-in-out infinite",
@@ -219,8 +215,8 @@ export function AvatarPanel({
                   cy={(mouthHeight + 12) / 2}
                   rx={mouthWidth / 2}
                   ry={Math.max(2, mouthHeight / 2)}
-                  fill={isSpeaking ? `${accent}55` : "transparent"}
-                  stroke={accent}
+                  fill={isSpeaking ? "rgba(74,132,214,0.35)" : "transparent"}
+                  stroke="#4a84d6"
                   strokeWidth={1.5}
                   opacity={isSpeaking ? 0.9 : 0.25}
                   style={{ transition: "rx 0.06s ease, ry 0.06s ease" }}
@@ -241,8 +237,8 @@ export function AvatarPanel({
             {/* Eye blink overlays */}
             {blink && (
               <>
-                <div className="absolute" style={{ top: 30, left: 22, width: 10, height: 3, background: "#09111f", borderRadius: 2 }} />
-                <div className="absolute" style={{ top: 30, right: 22, width: 10, height: 3, background: "#09111f", borderRadius: 2 }} />
+                <div className="absolute" style={{ top: 28, left: 20, width: 10, height: 3, background: "#172032", borderRadius: 2 }} />
+                <div className="absolute" style={{ top: 28, right: 20, width: 10, height: 3, background: "#172032", borderRadius: 2 }} />
               </>
             )}
           </div>
@@ -252,7 +248,7 @@ export function AvatarPanel({
             <p className="text-[15px] font-semibold text-white" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
               {persona.name}
             </p>
-            <p className="text-[11px]" style={{ color: isCrisis ? "#ff7b70" : accent }}>
+            <p className="text-[11px]" style={{ color: isCrisis ? "#c04040" : "#4a84d6" }}>
               {isListening ? "Listening…" : isSpeaking ? "Speaking…" : isCrisis ? "Crisis Support" : "Ready"}
             </p>
           </div>
@@ -267,8 +263,8 @@ export function AvatarPanel({
                   style={{
                     width: 3,
                     height: Math.max(4, 4 + amplitude * 16 * scale),
-                    background: accent,
-                    opacity: 0.6 + amplitude * 0.4,
+                    background: "#4a84d6",
+                    opacity: 0.5 + amplitude * 0.5,
                     transition: "height 0.06s ease",
                   }}
                 />
@@ -286,13 +282,13 @@ export function AvatarPanel({
                   style={{
                     width: 40 + i * 16,
                     height: 40 + i * 16,
-                    border: `1px solid ${accent}`,
-                    opacity: 0.4 - i * 0.12,
+                    border: "1px solid rgba(74,132,214,0.5)",
+                    opacity: 0.35 - i * 0.1,
                     animation: `listenRing 1.6s ease-out ${i * 0.4}s infinite`,
                   }}
                 />
               ))}
-              <div className="h-3 w-3 rounded-full" style={{ background: accent }} />
+              <div className="h-3 w-3 rounded-full" style={{ background: "#4a84d6" }} />
             </div>
           )}
         </div>
@@ -300,7 +296,7 @@ export function AvatarPanel({
         {/* Bottom gradient */}
         <div
           className="absolute inset-x-0 bottom-0 h-16"
-          style={{ background: "linear-gradient(to top, #111c31, transparent)" }}
+          style={{ background: "linear-gradient(to top, #172032, transparent)" }}
         />
       </div>
 
@@ -326,14 +322,8 @@ export function AvatarPanel({
           100% { transform: scale(1.4); opacity: 0; }
         }
         @keyframes crisisPulse {
-          0%, 100% {
-            border-color: rgba(255, 80, 80, 0.7);
-            box-shadow: 0 0 0 4px rgba(255,80,80,0.15);
-          }
-          50% {
-            border-color: rgba(255, 80, 80, 1.0);
-            box-shadow: 0 0 0 8px rgba(255,80,80,0.28);
-          }
+          0%, 100% { border-color: rgba(192,64,64,0.6); }
+          50%       { border-color: rgba(192,64,64,0.9); }
         }
       `}</style>
     </div>

@@ -102,7 +102,7 @@ export const AVATAR_PERSONAS: AvatarPersona[] = [
     name: "Dr. Aryan",
     description: "Calm, professional therapist",
     emoji: "\u{1F468}\u200D\u2695\uFE0F",
-    accentColor: "#6ce3cf",
+    accentColor: "#4a84d6",
     voiceDescription: "Warm, measured, reassuring",
   },
   {
@@ -110,7 +110,7 @@ export const AVATAR_PERSONAS: AvatarPersona[] = [
     name: "Priya",
     description: "Warm, friendly companion",
     emoji: "\u{1F469}",
-    accentColor: "#ffc96b",
+    accentColor: "#3d8a5c",
     voiceDescription: "Gentle, expressive, caring",
   },
   {
@@ -118,7 +118,7 @@ export const AVATAR_PERSONAS: AvatarPersona[] = [
     name: "Sage",
     description: "Neutral, gentle guide",
     emoji: "\u{1F9D8}",
-    accentColor: "#a78bfa",
+    accentColor: "#6a5acd",
     voiceDescription: "Calm, neutral, grounding",
   },
   {
@@ -126,7 +126,7 @@ export const AVATAR_PERSONAS: AvatarPersona[] = [
     name: "Dada Ji",
     description: "Wise, patient elder figure",
     emoji: "\u{1F9D3}",
-    accentColor: "#f97316",
+    accentColor: "#b5822a",
     voiceDescription: "Deep, patient, experienced",
   },
 ];

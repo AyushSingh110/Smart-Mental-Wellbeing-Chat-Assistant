@@ -1,27 +1,41 @@
-datasets
-email-validator
-faiss-cpu
+# ── Web Framework ─────────────────────────────────────────────────────────────
 fastapi
-faster-whisper
-google-generativeai
-gtts
+uvicorn[standard]
+python-multipart
+
+# ── Database ──────────────────────────────────────────────────────────────────
 motor
+pymongo
+
+# ── Auth ─────────────────────────────────────────────────────────────────────
+python-jose[cryptography]
 passlib[bcrypt]
+google-auth
 pydantic
 pydantic-settings
-pydub
 python-dotenv
-python-jose[cryptography]
-python-multipart
-reportlab
-requests
-scikit-learn
-sentence-transformers
-SpeechRecognition
-streamlit
-streamlit-mic-recorder
+email-validator
+
+# ── LLM ──────────────────────────────────────────────────────────────────────
+google-genai
+
+# ── ML / NLP ─────────────────────────────────────────────────────────────────
 torch
-torchaudio
-torchvision
 transformers
-uvicorn
+sentence-transformers
+faiss-cpu
+scikit-learn
+numpy
+
+# ── Voice ─────────────────────────────────────────────────────────────────────
+faster-whisper
+gtts
+pydub
+SpeechRecognition
+
+# ── Report Generation ─────────────────────────────────────────────────────────
+reportlab
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+requests
+datasets

@@ -30,32 +30,22 @@ export function AvatarSelectionPage() {
 
   return (
     <div
-      className="relative min-h-screen w-full overflow-hidden text-white flex items-center justify-center p-4"
-      style={{ background: "#09111f" }}
+      className="min-h-screen w-full flex items-center justify-center p-4"
+      style={{ background: "#0c1220" }}
     >
-      {/* Background mesh */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0"
-        style={{
-          background:
-            "radial-gradient(ellipse 60% 50% at 50% 0%, rgba(108,227,207,0.07) 0%, transparent 60%)",
-        }}
-      />
-
-      <div className="relative mx-auto w-full max-w-[900px]">
+      <div className="mx-auto w-full max-w-[900px]">
         {/* Header */}
         <div className="text-center mb-10">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#6ce3cf]/70">
+          <p className="label-caps" style={{ color: "#4a84d6" }}>
             One-time setup
           </p>
           <h1
-            className="mt-3 text-[clamp(1.8rem,4vw,2.8rem)] font-bold leading-tight tracking-[-0.025em] text-white"
+            className="mt-3 text-[clamp(1.8rem,4vw,2.6rem)] font-bold leading-tight tracking-tight text-white"
             style={{ fontFamily: "'Space Grotesk', sans-serif" }}
           >
             Choose your companion
           </h1>
-          <p className="mt-3 text-[14px] leading-relaxed text-slate-400 max-w-md mx-auto">
+          <p className="mt-3 text-[14px] leading-relaxed max-w-md mx-auto" style={{ color: "#7a92a8" }}>
             Your companion will be with you throughout your sessions — speaking,
             listening, and guiding. You can change this anytime in Settings.
           </p>
@@ -70,18 +60,12 @@ export function AvatarSelectionPage() {
                 key={persona.id}
                 type="button"
                 onClick={() => setSelected(persona.id)}
-                className="group relative flex flex-col items-center rounded-[24px] p-6 text-left transition-all duration-300"
+                className="relative flex flex-col items-center rounded-2xl p-6 text-left transition-all duration-200"
                 style={{
-                  background: isSelected
-                    ? `${persona.accentColor}12`
-                    : "rgba(255,255,255,0.03)",
+                  background: isSelected ? `${persona.accentColor}10` : "#172032",
                   border: isSelected
-                    ? `2px solid ${persona.accentColor}60`
-                    : "2px solid rgba(255,255,255,0.07)",
-                  transform: isSelected ? "translateY(-4px)" : "none",
-                  boxShadow: isSelected
-                    ? `0 12px 40px ${persona.accentColor}20`
-                    : "none",
+                    ? `2px solid ${persona.accentColor}50`
+                    : "2px solid rgba(55,75,105,0.45)",
                 }}
               >
                 {/* Selected check */}
@@ -90,29 +74,20 @@ export function AvatarSelectionPage() {
                     className="absolute top-3 right-3 flex h-6 w-6 items-center justify-center rounded-full"
                     style={{ background: persona.accentColor }}
                   >
-                    <Check className="h-3.5 w-3.5 text-[#09111f]" strokeWidth={3} />
+                    <Check className="h-3.5 w-3.5 text-white" strokeWidth={3} />
                   </div>
                 )}
 
-                {/* Avatar illustration — animated CSS avatar */}
+                {/* Avatar portrait */}
                 <div
                   className="relative mb-4 flex h-[100px] w-[100px] items-center justify-center rounded-full"
                   style={{
-                    background: isSelected
-                      ? `${persona.accentColor}18`
-                      : "rgba(255,255,255,0.05)",
+                    background: isSelected ? `${persona.accentColor}14` : "#1d2940",
                     border: isSelected
-                      ? `2px solid ${persona.accentColor}40`
-                      : "2px solid rgba(255,255,255,0.08)",
+                      ? `2px solid ${persona.accentColor}35`
+                      : "2px solid rgba(55,75,105,0.4)",
                   }}
                 >
-                  {/* Idle breathing animation */}
-                  {isSelected && (
-                    <span
-                      className="absolute inset-0 rounded-full animate-ping opacity-10"
-                      style={{ background: persona.accentColor }}
-                    />
-                  )}
                   <span
                     className="select-none"
                     style={{ fontSize: "3.5rem", lineHeight: 1 }}
@@ -124,7 +99,7 @@ export function AvatarSelectionPage() {
                 </div>
 
                 <h3
-                  className="text-[16px] font-semibold text-white"
+                  className="text-[16px] font-semibold"
                   style={{
                     fontFamily: "'Space Grotesk', sans-serif",
                     color: isSelected ? persona.accentColor : "white",
@@ -132,7 +107,7 @@ export function AvatarSelectionPage() {
                 >
                   {persona.name}
                 </h3>
-                <p className="mt-1 text-center text-[12px] leading-relaxed text-slate-400">
+                <p className="mt-1 text-center text-[12px] leading-relaxed" style={{ color: "#7a92a8" }}>
                   {persona.description}
                 </p>
 
@@ -142,7 +117,7 @@ export function AvatarSelectionPage() {
                   style={{
                     background: `${persona.accentColor}10`,
                     color: persona.accentColor,
-                    border: `1px solid ${persona.accentColor}25`,
+                    border: `1px solid ${persona.accentColor}28`,
                   }}
                 >
                   {persona.voiceDescription}
@@ -158,15 +133,14 @@ export function AvatarSelectionPage() {
             type="button"
             onClick={() => void handleContinue()}
             disabled={saving}
-            className="flex items-center gap-3 rounded-[14px] px-8 py-4 text-[14px] font-semibold text-[#09111f] transition-all duration-200 hover:opacity-90 active:scale-[0.98] disabled:opacity-50"
-            style={{
-              background: "linear-gradient(135deg, #6ce3cf 0%, #2cb8c7 100%)",
-              minWidth: "200px",
-            }}
+            className="flex items-center gap-3 rounded-[14px] px-8 py-4 text-[14px] font-semibold text-white transition-all duration-200 hover:opacity-90 active:scale-[0.98] disabled:opacity-50"
+            style={{ background: "#4a84d6", minWidth: "200px" }}
           >
             {saving ? (
               <>
-                <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#09111f]/20 border-t-[#09111f]" />
+                <span
+                  className="h-4 w-4 rounded-full border-2 border-white/20 border-t-white animate-spinSlow"
+                />
                 Saving…
               </>
             ) : (
@@ -175,10 +149,10 @@ export function AvatarSelectionPage() {
           </button>
 
           {error && (
-            <p className="text-[13px]" style={{ color: "#ff7b70" }}>{error}</p>
+            <p className="text-[13px]" style={{ color: "#c04040" }}>{error}</p>
           )}
 
-          <p className="text-[11px] text-slate-600">
+          <p className="text-[11px]" style={{ color: "#4a6278" }}>
             You can always change your companion later in Settings.
           </p>
         </div>

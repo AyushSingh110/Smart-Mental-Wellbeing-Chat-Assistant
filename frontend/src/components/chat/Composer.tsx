@@ -10,47 +10,36 @@ type ComposerProps = {
 };
 
 export function Composer({
-  value,
-  disabled = false,
-  suggestions = [],
-  onChange,
-  onSuggestionPick,
-  onSubmit,
+  value, disabled = false, suggestions = [], onChange, onSuggestionPick, onSubmit,
 }: ComposerProps) {
   const charCount = value.trim().length;
   const canSend   = !disabled && charCount > 0;
 
   return (
     <section
-      className="rounded-[20px] p-5"
-      style={{
-        background: "rgba(255,255,255,0.028)",
-        border: "1px solid rgba(255,255,255,0.07)",
-      }}
+      className="rounded-2xl p-4"
+      style={{ background: "#172032", border: "1px solid rgba(55,75,105,0.5)" }}
     >
-      {/* Suggestions */}
+      {/* Suggestion chips */}
       {suggestions.length > 0 && (
-        <div className="mb-4 flex flex-wrap gap-2">
+        <div className="mb-3 flex flex-wrap gap-2">
           {suggestions.map((s) => (
             <button
               key={s}
               type="button"
               onClick={() => onSuggestionPick?.(s)}
               disabled={disabled}
-              className="rounded-full px-3 py-1.5 text-[12px] text-slate-400 transition-all duration-200 hover:text-white disabled:opacity-40"
-              style={{
-                background: "rgba(255,255,255,0.03)",
-                border: "1px solid rgba(255,255,255,0.07)",
-              }}
+              className="rounded-full px-3 py-1.5 text-[12px] font-medium transition-all duration-150 disabled:opacity-40"
+              style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(55,75,105,0.4)", color: "#7a92a8" }}
               onMouseEnter={(e) => {
-                (e.currentTarget as HTMLElement).style.background = "rgba(108,227,207,0.07)";
-                (e.currentTarget as HTMLElement).style.border     = "1px solid rgba(108,227,207,0.18)";
-                (e.currentTarget as HTMLElement).style.color      = "#6ce3cf";
+                (e.currentTarget as HTMLElement).style.background = "rgba(74,132,214,0.1)";
+                (e.currentTarget as HTMLElement).style.borderColor = "rgba(74,132,214,0.3)";
+                (e.currentTarget as HTMLElement).style.color = "#4a84d6";
               }}
               onMouseLeave={(e) => {
                 (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.03)";
-                (e.currentTarget as HTMLElement).style.border     = "1px solid rgba(255,255,255,0.07)";
-                (e.currentTarget as HTMLElement).style.color      = "";
+                (e.currentTarget as HTMLElement).style.borderColor = "rgba(55,75,105,0.4)";
+                (e.currentTarget as HTMLElement).style.color = "#7a92a8";
               }}
             >
               {s}
@@ -61,10 +50,10 @@ export function Composer({
 
       {/* Input row */}
       <div
-        className="flex items-end gap-3 rounded-[16px] p-3 transition-all duration-200"
+        className="flex items-end gap-3 rounded-xl p-3 transition-all duration-150"
         style={{
-          background: "rgba(255,255,255,0.03)",
-          border: `1px solid ${value ? "rgba(108,227,207,0.2)" : "rgba(255,255,255,0.06)"}`,
+          background: "#0c1220",
+          border: `1px solid ${value ? "rgba(74,132,214,0.35)" : "rgba(55,75,105,0.4)"}`,
         }}
       >
         <textarea
@@ -79,39 +68,30 @@ export function Composer({
             }
           }}
           placeholder="Tell the assistant how you are feeling…"
-          className="flex-1 resize-none bg-transparent text-[14px] leading-relaxed text-slate-200 outline-none placeholder:text-slate-600 disabled:opacity-50"
+          className="flex-1 resize-none bg-transparent text-[13px] leading-relaxed outline-none disabled:opacity-50"
+          style={{ color: "#c8d8ea" }}
         />
 
-        {/* Send button */}
         <button
           type="button"
           onClick={onSubmit}
           disabled={!canSend}
           aria-label="Send message"
-          className="mb-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] transition-all duration-200 active:scale-95 disabled:cursor-not-allowed disabled:opacity-30"
-          style={{
-            background: canSend
-              ? "linear-gradient(135deg, #6ce3cf 0%, #2cb8c7 100%)"
-              : "rgba(255,255,255,0.05)",
-          }}
+          className="mb-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-all duration-150 active:scale-95 disabled:cursor-not-allowed disabled:opacity-30"
+          style={{ background: canSend ? "#4a84d6" : "rgba(255,255,255,0.05)" }}
+          onMouseEnter={(e) => { if (canSend) (e.currentTarget as HTMLElement).style.background = "#3168b8"; }}
+          onMouseLeave={(e) => { if (canSend) (e.currentTarget as HTMLElement).style.background = "#4a84d6"; }}
         >
-          <Send
-            className="h-4 w-4"
-            style={{ color: canSend ? "#09111f" : "#475569" }}
-            strokeWidth={2}
-          />
+          <Send className="h-4 w-4" style={{ color: canSend ? "#ffffff" : "#4a6278" }} strokeWidth={2} />
         </button>
       </div>
 
-      {/* Footer */}
-      <div className="mt-3 flex items-center justify-between">
-        <p className="text-[11px] text-slate-600">
-          {disabled ? "Waiting for response…" : "Ctrl+Enter to send · Speak clearly and naturally"}
+      {/* Footer hint */}
+      <div className="mt-2.5 flex items-center justify-between">
+        <p className="text-[11px]" style={{ color: "#4a6278" }}>
+          {disabled ? "Waiting for response…" : "Ctrl+Enter to send"}
         </p>
-        <p
-          className="text-[11px]"
-          style={{ color: charCount > 400 ? "#ffc96b" : "#475569" }}
-        >
+        <p className="text-[11px]" style={{ color: charCount > 400 ? "#b5822a" : "#4a6278" }}>
           {charCount} chars
         </p>
       </div>

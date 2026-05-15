@@ -34,13 +34,21 @@ async def register(user: UserRegister):
         raise HTTPException(status_code=400, detail="Email already registered")
 
     hashed = hash_password(user.password)
+    now = datetime.utcnow()
 
     result = await db.users.insert_one({
         "email": user.email,
+        "name": user.email.split("@")[0].title(),
         "hashed_password": hashed,
+        "auth_provider": "local",
         "baseline_mhi": user.baseline_mhi,
-        "created_at": datetime.utcnow(),
-        "last_login": None,
+        "latest_mhi": user.baseline_mhi,
+        "phq2_total": 0,
+        "gad2_total": 0,
+        "avatar_id": "therapist",
+        "preferred_language": "en",
+        "created_at": now,
+        "last_login": now,
     })
 
     token = create_access_token(str(result.inserted_id))
@@ -57,7 +65,8 @@ async def login(user: UserLogin):
     if not db_user:
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    if not verify_password(user.password, db_user["hashed_password"]):
+    stored_hash = db_user.get("hashed_password", "")
+    if not stored_hash or not verify_password(user.password, stored_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     await db.users.update_one(

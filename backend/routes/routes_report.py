@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+from functools import partial
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
@@ -17,6 +19,11 @@ router = APIRouter(prefix="/report", tags=["Report"])
 report_service = ReportService()
 
 
+async def _run_in_thread(fn, *args, **kwargs):
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, partial(fn, *args, **kwargs))
+
+
 @router.get("/", summary="Generate and download session PDF report")
 async def generate_report(
     user_id: ObjectId = Depends(get_current_user),
@@ -27,13 +34,11 @@ async def generate_report(
     if not conversations:
         return {"error": "No session data found."}
 
-    # Build conversation text for LLM summary
     conversation_text = "\n".join(
-        f"User: {c['message']}" for c in conversations
+        f"User: {c.get('message', '')}" for c in conversations if c.get("message")
     )
 
-    summary_prompt = f"""
-You are a clinical AI assistant writing a structured session summary for a therapist.
+    summary_prompt = f"""You are a clinical AI assistant writing a structured session summary for a therapist.
 
 Analyze the following mental health conversation and provide:
 1. Dominant emotional patterns observed
@@ -49,29 +54,30 @@ Conversation:
 {conversation_text}
 """
 
-    summary = generate_llm_response(summary_prompt)
+    summary = await _run_in_thread(generate_llm_response, summary_prompt)
+    if not summary or not summary.strip():
+        summary = "Insufficient session data to generate a full clinical summary."
 
-    mhi_values = [c["mhi"] for c in conversations if "mhi" in c]
+    mhi_values = [int(c["mhi"]) for c in conversations if "mhi" in c]
     avg_mhi = round(sum(mhi_values) / len(mhi_values), 2) if mhi_values else 0.0
     session_count = len(conversations)
 
-    # Latest category and trend from history service
     latest_category = conversations[-1].get("category", "—") if conversations else "—"
 
-    # Inline trend calculation (avoid extra DB round-trip)
     if len(mhi_values) >= 2:
         delta = mhi_values[-1] - mhi_values[0]
         trend = "improving" if delta > 5 else ("declining" if delta < -5 else "stable")
     else:
         trend = "insufficient data"
 
-    pdf_buffer = report_service.generate_pdf(
-        user_id=str(user_id),
-        summary=summary,
-        mhi_avg=avg_mhi,
-        session_count=session_count,
-        latest_category=latest_category,
-        trend=trend,
+    pdf_buffer = await _run_in_thread(
+        report_service.generate_pdf,
+        str(user_id),
+        summary,
+        avg_mhi,
+        session_count,
+        latest_category,
+        trend,
     )
 
     return StreamingResponse(

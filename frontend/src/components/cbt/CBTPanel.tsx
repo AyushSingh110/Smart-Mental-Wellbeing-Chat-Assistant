@@ -11,9 +11,9 @@ type CBTPanelProps = {
 // ── Breathing Exercise (4-7-8) ────────────────────────────────────────────────
 function BreathingExercise({ onComplete }: { onComplete: () => void }) {
   const PHASES = [
-    { label: "Inhale",  duration: 4, color: "#6ce3cf" },
-    { label: "Hold",    duration: 7, color: "#ffc96b" },
-    { label: "Exhale",  duration: 8, color: "#a78bfa" },
+    { label: "Inhale",  duration: 4, color: "#4a84d6" },
+    { label: "Hold",    duration: 7, color: "#b5822a" },
+    { label: "Exhale",  duration: 8, color: "#6a5acd" },
   ];
   const [phaseIdx, setPhaseIdx] = useState(0);
   const [tick, setTick]        = useState(0);
@@ -44,14 +44,14 @@ function BreathingExercise({ onComplete }: { onComplete: () => void }) {
       <h4 className="text-[15px] font-semibold text-white" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
         4-7-8 Breathing
       </h4>
-      <p className="text-[12px] text-slate-500 text-center max-w-xs">
+      <p className="text-[12px] text-center max-w-xs" style={{ color: "#7a92a8" }}>
         Inhale for 4 counts, hold for 7, exhale for 8. Complete 4 cycles.
       </p>
 
       {/* SVG circle timer */}
       <div className="relative flex items-center justify-center">
         <svg width={140} height={140} className="-rotate-90">
-          <circle cx={70} cy={70} r={r} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={8} />
+          <circle cx={70} cy={70} r={r} fill="none" stroke="rgba(55,75,105,0.4)" strokeWidth={8} />
           <circle
             cx={70} cy={70} r={r}
             fill="none"
@@ -71,21 +71,21 @@ function BreathingExercise({ onComplete }: { onComplete: () => void }) {
         </div>
       </div>
 
-      <p className="text-[11px] text-slate-600">Cycle {cycles + 1} of 4</p>
+      <p className="text-[11px]" style={{ color: "#4a6278" }}>Cycle {cycles + 1} of 4</p>
 
       <div className="flex gap-3">
         <button
           type="button"
           onClick={() => setRunning((r) => !r)}
           className="rounded-[12px] px-6 py-2.5 text-[13px] font-semibold transition-all"
-          style={{ background: "rgba(108,227,207,0.12)", color: "#6ce3cf", border: "1px solid rgba(108,227,207,0.25)" }}
+          style={{ background: "rgba(74,132,214,0.12)", color: "#4a84d6", border: "1px solid rgba(74,132,214,0.25)" }}
         >
           {running ? "Pause" : "Start"}
         </button>
         {cycles >= 4 && (
           <button type="button" onClick={onComplete}
-            className="rounded-[12px] px-6 py-2.5 text-[13px] font-semibold text-[#09111f]"
-            style={{ background: "linear-gradient(135deg, #6ce3cf, #2cb8c7)" }}
+            className="rounded-[12px] px-6 py-2.5 text-[13px] font-semibold text-white"
+            style={{ background: "#4a84d6" }}
           >
             Done
           </button>
@@ -118,18 +118,18 @@ function GroundingExercise({ onComplete }: { onComplete: () => void }) {
       <div className="flex gap-2 justify-center">
         {GROUNDING_STEPS.map((s, i) => (
           <div key={i} className="h-2 w-2 rounded-full transition-all"
-            style={{ background: i <= step ? "#6ce3cf" : "rgba(255,255,255,0.1)" }} />
+            style={{ background: i <= step ? "#4a84d6" : "rgba(55,75,105,0.4)" }} />
         ))}
       </div>
 
-      <div className="rounded-[16px] p-5" style={{ background: "rgba(108,227,207,0.06)", border: "1px solid rgba(108,227,207,0.15)" }}>
+      <div className="rounded-[16px] p-5" style={{ background: "rgba(74,132,214,0.06)", border: "1px solid rgba(74,132,214,0.18)" }}>
         <div className="flex items-center gap-3 mb-3">
-          <span className="text-[2rem] font-bold text-[#6ce3cf]" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+          <span className="text-[2rem] font-bold" style={{ color: "#4a84d6", fontFamily: "'Space Grotesk', sans-serif" }}>
             {current.count}
           </span>
           <div>
             <p className="text-[13px] font-semibold text-white">{current.sense}</p>
-            <p className="text-[11px] text-slate-400">{current.prompt}</p>
+            <p className="text-[11px]" style={{ color: "#7a92a8" }}>{current.prompt}</p>
           </div>
         </div>
       </div>
@@ -137,19 +137,19 @@ function GroundingExercise({ onComplete }: { onComplete: () => void }) {
       <div className="flex justify-between">
         <button type="button" onClick={() => setStep((s) => Math.max(0, s - 1))} disabled={step === 0}
           className="flex items-center gap-1.5 rounded-[10px] px-4 py-2 text-[12px] disabled:opacity-30"
-          style={{ background: "rgba(255,255,255,0.05)", color: "#94a3b8" }}>
+          style={{ background: "rgba(55,75,105,0.25)", color: "#7a92a8" }}>
           <ChevronLeft className="h-3.5 w-3.5" /> Back
         </button>
         {step < GROUNDING_STEPS.length - 1 ? (
           <button type="button" onClick={() => setStep((s) => s + 1)}
             className="flex items-center gap-1.5 rounded-[10px] px-4 py-2 text-[12px] font-semibold"
-            style={{ background: "rgba(108,227,207,0.12)", color: "#6ce3cf" }}>
+            style={{ background: "rgba(74,132,214,0.12)", color: "#4a84d6" }}>
             Next <ChevronRight className="h-3.5 w-3.5" />
           </button>
         ) : (
           <button type="button" onClick={onComplete}
-            className="flex items-center gap-1.5 rounded-[10px] px-4 py-2 text-[12px] font-semibold text-[#09111f]"
-            style={{ background: "linear-gradient(135deg, #6ce3cf, #2cb8c7)" }}>
+            className="flex items-center gap-1.5 rounded-[10px] px-4 py-2 text-[12px] font-semibold text-white"
+            style={{ background: "#4a84d6" }}>
             <Check className="h-3.5 w-3.5" /> Complete
           </button>
         )}
@@ -184,20 +184,25 @@ function ThoughtRecord({ onComplete }: { onComplete: (notes: string) => void }) 
         { label: "Balanced thought", value: balanced, set: setBalanced, placeholder: "A more balanced way to see this…" },
       ].map(({ label, value, set, placeholder }) => (
         <div key={label}>
-          <p className="mb-1 text-[11px] font-semibold text-slate-400">{label}</p>
+          <p className="mb-1 text-[11px] font-semibold" style={{ color: "#7a92a8" }}>{label}</p>
           <textarea
             value={value}
             onChange={(e) => set(e.target.value)}
             placeholder={placeholder}
             rows={2}
-            className="w-full resize-none rounded-[12px] px-3 py-2.5 text-[12px] text-slate-200 placeholder-slate-600 outline-none"
-            style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
+            className="w-full resize-none rounded-[12px] px-3 py-2.5 text-[12px] outline-none"
+            style={{
+              background: "#0c1220",
+              border: "1px solid rgba(55,75,105,0.45)",
+              color: "#c8d8ea",
+              caretColor: "#4a84d6",
+            }}
           />
         </div>
       ))}
       <button type="button" disabled={!allFilled} onClick={() => onComplete(notes)}
-        className="w-full rounded-[12px] py-2.5 text-[13px] font-semibold text-[#09111f] disabled:opacity-40"
-        style={{ background: "linear-gradient(135deg, #6ce3cf, #2cb8c7)" }}>
+        className="w-full rounded-[12px] py-2.5 text-[13px] font-semibold text-white disabled:opacity-40"
+        style={{ background: "#4a84d6" }}>
         Save thought record
       </button>
     </div>
@@ -209,7 +214,7 @@ function MoodJournalWidget({ onComplete }: { onComplete: (rating: number, notes:
   const [rating, setRating] = useState(5);
   const [notes, setNotes]   = useState("");
 
-  const color = rating >= 7 ? "#7be495" : rating >= 4 ? "#ffc96b" : "#ff7b70";
+  const color = rating >= 7 ? "#3d8a5c" : rating >= 4 ? "#b5822a" : "#c04040";
 
   return (
     <div className="space-y-4 py-2">
@@ -218,13 +223,13 @@ function MoodJournalWidget({ onComplete }: { onComplete: (rating: number, notes:
       </h4>
       <div>
         <div className="flex items-center justify-between mb-2">
-          <p className="text-[12px] text-slate-400">How are you feeling? (1 = very low, 10 = great)</p>
+          <p className="text-[12px]" style={{ color: "#7a92a8" }}>How are you feeling? (1 = very low, 10 = great)</p>
           <span className="text-[20px] font-bold" style={{ color, fontFamily: "'Space Grotesk', sans-serif" }}>{rating}</span>
         </div>
         <input type="range" min={1} max={10} step={1} value={rating}
           onChange={(e) => setRating(Number(e.target.value))}
           className="w-full cursor-pointer" style={{ accentColor: color }} />
-        <div className="flex justify-between text-[10px] text-slate-600 mt-1">
+        <div className="flex justify-between mt-1 text-[10px]" style={{ color: "#4a6278" }}>
           <span>Very low</span><span>Great</span>
         </div>
       </div>
@@ -233,12 +238,17 @@ function MoodJournalWidget({ onComplete }: { onComplete: (rating: number, notes:
         onChange={(e) => setNotes(e.target.value)}
         placeholder="Optional: anything on your mind today?"
         rows={3}
-        className="w-full resize-none rounded-[12px] px-3 py-2.5 text-[12px] text-slate-200 placeholder-slate-600 outline-none"
-        style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
+        className="w-full resize-none rounded-[12px] px-3 py-2.5 text-[12px] outline-none"
+        style={{
+          background: "#0c1220",
+          border: "1px solid rgba(55,75,105,0.45)",
+          color: "#c8d8ea",
+          caretColor: "#4a84d6",
+        }}
       />
       <button type="button" onClick={() => onComplete(rating, notes)}
-        className="w-full rounded-[12px] py-2.5 text-[13px] font-semibold text-[#09111f]"
-        style={{ background: "linear-gradient(135deg, #6ce3cf, #2cb8c7)" }}>
+        className="w-full rounded-[12px] py-2.5 text-[13px] font-semibold text-white"
+        style={{ background: "#4a84d6" }}>
         Save entry
       </button>
     </div>
@@ -273,39 +283,44 @@ function CognitiveRestructuring({ onComplete }: { onComplete: (notes: string) =>
       <div className="flex gap-1.5 justify-center">
         {REFRAME_STEPS.map((_, i) => (
           <div key={i} className="h-1.5 rounded-full transition-all"
-            style={{ width: i === step ? 24 : 8, background: i <= step ? "#6ce3cf" : "rgba(255,255,255,0.1)" }} />
+            style={{ width: i === step ? 24 : 8, background: i <= step ? "#4a84d6" : "rgba(55,75,105,0.4)" }} />
         ))}
       </div>
 
-      <div className="rounded-[16px] p-4" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
-        <p className="text-[12px] font-semibold text-[#6ce3cf] mb-2">Step {step + 1} of {REFRAME_STEPS.length}</p>
+      <div className="rounded-[16px] p-4" style={{ background: "rgba(74,132,214,0.05)", border: "1px solid rgba(74,132,214,0.15)" }}>
+        <p className="text-[12px] font-semibold mb-2" style={{ color: "#4a84d6" }}>Step {step + 1} of {REFRAME_STEPS.length}</p>
         <p className="text-[13px] text-white mb-3">{current.q}</p>
         <textarea
           value={answers[step]}
           onChange={(e) => setAnswer(e.target.value)}
           placeholder={current.placeholder}
           rows={3}
-          className="w-full resize-none rounded-[10px] px-3 py-2.5 text-[12px] text-slate-200 placeholder-slate-600 outline-none"
-          style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
+          className="w-full resize-none rounded-[10px] px-3 py-2.5 text-[12px] outline-none"
+          style={{
+            background: "#0c1220",
+            border: "1px solid rgba(55,75,105,0.45)",
+            color: "#c8d8ea",
+            caretColor: "#4a84d6",
+          }}
         />
       </div>
 
       <div className="flex justify-between">
         <button type="button" disabled={step === 0} onClick={() => setStep((s) => s - 1)}
           className="flex items-center gap-1.5 rounded-[10px] px-4 py-2 text-[12px] disabled:opacity-30"
-          style={{ background: "rgba(255,255,255,0.05)", color: "#94a3b8" }}>
+          style={{ background: "rgba(55,75,105,0.25)", color: "#7a92a8" }}>
           <ChevronLeft className="h-3.5 w-3.5" /> Back
         </button>
         {step < REFRAME_STEPS.length - 1 ? (
           <button type="button" disabled={!answers[step].trim()} onClick={() => setStep((s) => s + 1)}
             className="flex items-center gap-1.5 rounded-[10px] px-4 py-2 text-[12px] font-semibold disabled:opacity-40"
-            style={{ background: "rgba(108,227,207,0.12)", color: "#6ce3cf" }}>
+            style={{ background: "rgba(74,132,214,0.12)", color: "#4a84d6" }}>
             Next <ChevronRight className="h-3.5 w-3.5" />
           </button>
         ) : (
           <button type="button" disabled={!answers[step].trim()} onClick={() => onComplete(notes)}
-            className="flex items-center gap-1.5 rounded-[10px] px-4 py-2 text-[12px] font-semibold disabled:opacity-40 text-[#09111f]"
-            style={{ background: "linear-gradient(135deg, #6ce3cf, #2cb8c7)" }}>
+            className="flex items-center gap-1.5 rounded-[10px] px-4 py-2 text-[12px] font-semibold disabled:opacity-40 text-white"
+            style={{ background: "#4a84d6" }}>
             <Check className="h-3.5 w-3.5" /> Complete
           </button>
         )}
@@ -341,6 +356,19 @@ export function CBTPanel({ initialTechnique }: CBTPanelProps) {
     await handleComplete("mood_journal", notes);
   }
 
+  const exerciseWrapper = (
+    <div className="rounded-[20px] p-5" style={{ background: "#172032", border: "1px solid rgba(55,75,105,0.4)" }}>
+      <button type="button" onClick={() => setActive(null)}
+        className="mb-3 text-[11px] transition-colors"
+        style={{ color: "#4a6278" }}
+        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = "#c8d8ea"; }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = "#4a6278"; }}
+      >
+        ← Back to techniques
+      </button>
+    </div>
+  );
+
   return (
     <div className="space-y-4">
       {/* Technique selector */}
@@ -354,34 +382,50 @@ export function CBTPanel({ initialTechnique }: CBTPanelProps) {
                   key={t.id}
                   type="button"
                   onClick={() => setActive(t.id)}
-                  className="flex items-start gap-3 rounded-[16px] p-4 text-left transition-all hover:opacity-90"
+                  className="flex items-start gap-3 rounded-[16px] p-4 text-left transition-all"
                   style={{
-                    background: done ? "rgba(123,228,149,0.07)" : "rgba(255,255,255,0.03)",
-                    border: done ? "1px solid rgba(123,228,149,0.2)" : "1px solid rgba(255,255,255,0.07)",
+                    background: done ? "rgba(61,138,92,0.07)" : "rgba(255,255,255,0.02)",
+                    border: done ? "1px solid rgba(61,138,92,0.22)" : "1px solid rgba(55,75,105,0.35)",
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!done) {
+                      (e.currentTarget as HTMLElement).style.background = "rgba(74,132,214,0.06)";
+                      (e.currentTarget as HTMLElement).style.border = "1px solid rgba(74,132,214,0.2)";
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!done) {
+                      (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.02)";
+                      (e.currentTarget as HTMLElement).style.border = "1px solid rgba(55,75,105,0.35)";
+                    }
                   }}
                 >
                   <span className="text-[1.6rem]" role="img" aria-label={t.label}>{t.icon}</span>
                   <div>
                     <p className="text-[13px] font-semibold text-white flex items-center gap-1.5">
                       {t.label}
-                      {done && <Check className="h-3 w-3 text-[#7be495]" />}
+                      {done && <Check className="h-3 w-3" style={{ color: "#3d8a5c" }} />}
                     </p>
-                    <p className="text-[11px] text-slate-500">{t.description}</p>
+                    <p className="text-[11px]" style={{ color: "#4a6278" }}>{t.description}</p>
                   </div>
                 </button>
               );
             })}
           </div>
           {saved && (
-            <p className="text-center text-[12px] text-[#7be495]">Session saved successfully.</p>
+            <p className="text-center text-[12px]" style={{ color: "#3d8a5c" }}>Session saved successfully.</p>
           )}
         </>
       )}
 
       {/* Active exercise */}
       {active === "breathing" && (
-        <div className="rounded-[20px] p-5" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
-          <button type="button" onClick={() => setActive(null)} className="mb-3 text-[11px] text-slate-500 hover:text-white">
+        <div className="rounded-[20px] p-5" style={{ background: "#172032", border: "1px solid rgba(55,75,105,0.4)" }}>
+          <button type="button" onClick={() => setActive(null)}
+            className="mb-3 text-[11px] transition-colors"
+            style={{ color: "#4a6278" }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = "#c8d8ea"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = "#4a6278"; }}>
             ← Back to techniques
           </button>
           <BreathingExercise onComplete={() => void handleComplete("breathing")} />
@@ -389,8 +433,12 @@ export function CBTPanel({ initialTechnique }: CBTPanelProps) {
       )}
 
       {active === "grounding" && (
-        <div className="rounded-[20px] p-5" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
-          <button type="button" onClick={() => setActive(null)} className="mb-3 text-[11px] text-slate-500 hover:text-white">
+        <div className="rounded-[20px] p-5" style={{ background: "#172032", border: "1px solid rgba(55,75,105,0.4)" }}>
+          <button type="button" onClick={() => setActive(null)}
+            className="mb-3 text-[11px] transition-colors"
+            style={{ color: "#4a6278" }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = "#c8d8ea"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = "#4a6278"; }}>
             ← Back to techniques
           </button>
           <GroundingExercise onComplete={() => void handleComplete("grounding")} />
@@ -398,8 +446,12 @@ export function CBTPanel({ initialTechnique }: CBTPanelProps) {
       )}
 
       {active === "thought_record" && (
-        <div className="rounded-[20px] p-5" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
-          <button type="button" onClick={() => setActive(null)} className="mb-3 text-[11px] text-slate-500 hover:text-white">
+        <div className="rounded-[20px] p-5" style={{ background: "#172032", border: "1px solid rgba(55,75,105,0.4)" }}>
+          <button type="button" onClick={() => setActive(null)}
+            className="mb-3 text-[11px] transition-colors"
+            style={{ color: "#4a6278" }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = "#c8d8ea"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = "#4a6278"; }}>
             ← Back to techniques
           </button>
           <ThoughtRecord onComplete={(notes) => void handleComplete("thought_record", notes)} />
@@ -407,8 +459,12 @@ export function CBTPanel({ initialTechnique }: CBTPanelProps) {
       )}
 
       {active === "mood_journal" && (
-        <div className="rounded-[20px] p-5" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
-          <button type="button" onClick={() => setActive(null)} className="mb-3 text-[11px] text-slate-500 hover:text-white">
+        <div className="rounded-[20px] p-5" style={{ background: "#172032", border: "1px solid rgba(55,75,105,0.4)" }}>
+          <button type="button" onClick={() => setActive(null)}
+            className="mb-3 text-[11px] transition-colors"
+            style={{ color: "#4a6278" }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = "#c8d8ea"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = "#4a6278"; }}>
             ← Back to techniques
           </button>
           <MoodJournalWidget onComplete={(r, n) => void handleMoodComplete(r, n)} />
@@ -416,8 +472,12 @@ export function CBTPanel({ initialTechnique }: CBTPanelProps) {
       )}
 
       {active === "cognitive_restructuring" && (
-        <div className="rounded-[20px] p-5" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
-          <button type="button" onClick={() => setActive(null)} className="mb-3 text-[11px] text-slate-500 hover:text-white">
+        <div className="rounded-[20px] p-5" style={{ background: "#172032", border: "1px solid rgba(55,75,105,0.4)" }}>
+          <button type="button" onClick={() => setActive(null)}
+            className="mb-3 text-[11px] transition-colors"
+            style={{ color: "#4a6278" }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = "#c8d8ea"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = "#4a6278"; }}>
             ← Back to techniques
           </button>
           <CognitiveRestructuring onComplete={(notes) => void handleComplete("cognitive_restructuring", notes)} />

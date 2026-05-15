@@ -96,11 +96,11 @@ _BANNED_PHRASES = re.compile(
 
 # ── CBT technique hints that can be woven naturally into Moderate Distress responses
 _CBT_NATURAL_HINTS: dict[str, str] = {
-    "breathing":        "gentle breathing techniques (like slowing the exhale) can help settle the body",
-    "grounding":        "grounding exercises — noticing what's around you right now — can help break the spiral",
-    "thought_record":   "writing down what's happening and how it's making you feel can sometimes create a little distance",
-    "cognitive_reframe":"trying to gently question whether that thought is 100% true can sometimes ease the pressure",
-    "body_scan":        "a quick body scan — just noticing where you're holding tension — can be surprisingly settling",
+    "breathing":               "gentle breathing techniques (like slowing the exhale) can help settle the body",
+    "grounding":               "grounding exercises — noticing what's around you right now — can help break the spiral",
+    "thought_record":          "writing down what's happening and how it's making you feel can sometimes create a little distance",
+    "cognitive_restructuring": "trying to gently question whether that thought is 100% true can sometimes ease the pressure",
+    "mood_journal":            "keeping a short note about how you're feeling right now — just a line or two — can help you notice patterns over time",
 }
 
 
