@@ -545,7 +545,6 @@ Pull requests are welcome. For significant changes, open an issue first to discu
 ---
 
 ## License
-
 This project is released under the MIT License. See `LICENSE` for details.
 
 ---
